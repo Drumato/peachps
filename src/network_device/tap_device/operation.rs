@@ -1,12 +1,12 @@
-use crate::tap_device::*;
+use crate::network_device::tap_device::*;
+use crate::network_device::NetworkDeviceError;
 use std::ffi::CString;
 
-#[link(name = "setup_tap_device")]
+#[link(name = "setup_c")]
 extern "C" {
-    // void setup(char *device_path, char *interface_name, struct TapDevice *tap_device);
-    fn setup(
+    // void _setup_tap_dev(char *device_path, struct TapDevice *tap_device);
+    fn _setup_tap_dev(
         device_path: *const libc::c_char,
-        interface_name: *const libc::c_char,
         tap_device: *mut RawTapDevice,
     ) -> libc::c_int;
 }
@@ -14,31 +14,19 @@ extern "C" {
 #[allow(dead_code)]
 /// TAPデバイスを設定する
 /// TAPデバイスのパスと，パケットを受信するインタフェースの名前を使用する
-pub fn setup_tap_device(
-    device_path: String,
-    interface_name: String,
-) -> Result<TapDevice, TapDeviceError> {
+pub fn setup_tap_device(device_path: String) -> Result<TapDevice, NetworkDeviceError> {
     unsafe {
         let mut tap_device: RawTapDevice = std::mem::MaybeUninit::uninit().assume_init();
         let device_path = match CString::new(device_path) {
             Ok(s) => s,
             Err(_e) => {
-                return Err(TapDeviceError::MalformedDeviceName);
+                return Err(NetworkDeviceError::MalformedDeviceName);
             }
         };
-        let interface_name = match CString::new(interface_name) {
-            Ok(s) => s,
-            Err(_e) => {
-                return Err(TapDeviceError::MalformedInterfaceName);
-            }
-        };
-        let ret_v = setup(
-            device_path.as_ptr(),
-            interface_name.as_ptr(),
-            &mut tap_device,
-        );
+
+        let ret_v = _setup_tap_dev(device_path.as_ptr(), &mut tap_device);
         if ret_v == -1 {
-            return Err(TapDeviceError::FailedToSetupTapDevice);
+            return Err(NetworkDeviceError::FailedToSetupNetworkDevice);
         }
 
         Ok(TapDevice::from_raw(tap_device.fd, tap_device.mac_addr))

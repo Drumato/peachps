@@ -2,6 +2,6 @@ extern crate cc;
 
 fn main() {
     cc::Build::new()
-        .file("src/c/setup_tap_device.c")
-        .compile("libsetup_tap_device.a");
+        .files(&["src/c/setup_tap_device.c", "src/c/setup_raw_socket.c"])
+        .compile("libsetup_c.a");
 }

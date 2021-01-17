@@ -3,8 +3,8 @@ name = "peachps"
 version = "0.1.0"
 authors = ["Drumato <drumatech109@gmail.com>"]
 edition = "2018"
-links = "setup_tap_device"
 build = "build.rs"
+links = "setup_c"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -12,6 +12,8 @@ build = "build.rs"
 libc = "0.2.82"
 thiserror = "1.0.23"
 structopt = "0.3"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1.42"
 
 [build-dependencies]
 cc = "1.0"
