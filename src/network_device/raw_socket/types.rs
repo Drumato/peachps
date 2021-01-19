@@ -26,13 +26,17 @@ impl network_device::NetworkDevice for Socket {
 
         Ok(result as usize)
     }
+
+    fn device_addr(&self) -> link::MacAddress {
+        self.mac_addr
+    }
 }
 
 impl Socket {
     pub unsafe fn from_raw(fd: network_device::FileDescriptor, addr: link::RawMacAddress) -> Self {
         Self {
             fd: fd,
-            mac_addr: link::MacAddress { addr: addr },
+            mac_addr: link::MacAddress(addr),
         }
     }
 }

@@ -1,15 +1,6 @@
-use crate::network_device::raw_socket::*;
-use crate::network_device::NetworkDeviceError;
-use std::ffi::CString;
+use crate::network_device::*;
 
-#[link(name = "setup_c")]
-extern "C" {
-    // void _setup_raw_sock(char *interface_name, struct RawSocket *raw_sock);
-    fn _setup_raw_sock(
-        interface_name: *const libc::c_char,
-        raw_sock: *mut RawSocket,
-    ) -> libc::c_int;
-}
+use std::ffi::CString;
 
 #[allow(dead_code)]
 pub fn setup_raw_socket(interface_name: String) -> Result<Socket, NetworkDeviceError> {

@@ -1,49 +1,54 @@
+mod internet;
 mod link;
 mod network_device;
-
-use network_device::NetworkDevice;
+mod protocol_stack;
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("usage: ./peachps [socket/tap]");
+        eprintln!("usage: ./peachps [socket/tap] [ip-addr]");
         std::process::exit(1);
     }
+
+    // ProtocolStackが静的ディスパッチによってネットワークデバイスを分けるため，このように．
+    // 本当はBox<dyn trait>にしたいが，そうすると実行速度が犠牲になってしまう．
     match args[1].as_str() {
         "socket" => {
-            let mut sock = network_device::setup_raw_socket("eth0".to_string())?;
-            eprintln!("mac address => {}", sock.mac_addr);
+            let sock = network_device::setup_raw_socket("eth0".to_string())?;
+            let stack = protocol_stack::ProtocolStack::new(sock, link::Ethernet());
 
-            loop {
-                let mut buf: Vec<u8> = Vec::with_capacity(2048);
-                let nbytes = sock.read(buf.as_mut_slice()).await?;
-                eprintln!("reading {} bytes", nbytes);
-
-                if nbytes == 0 {
-                    break;
-                }
-            }
+            raw_socket_run(stack).await?;
         }
         "tap" => {
-            let mut tap_dev = network_device::setup_tap_device("/dev/net/tun".to_string())?;
-            eprintln!("mac address => {}", tap_dev.mac_addr);
+            let tap_dev = network_device::setup_tap_device("/dev/net/tun".to_string())?;
+            let stack = protocol_stack::ProtocolStack::new(tap_dev, link::Ethernet());
 
-            loop {
-                let mut buf: Vec<u8> = Vec::with_capacity(2048);
-                let nbytes = tap_dev.read(buf.as_mut_slice()).await?;
-                eprintln!("reading {} bytes", nbytes);
-
-                if nbytes == 0 {
-                    break;
-                }
-            }
+            tap_device_run(stack).await?;
         }
         _ => {
             eprintln!("unsupported such a method => '{}'", args[1]);
             std::process::exit(1);
         }
-    };
+    }
 
     Ok(())
+}
+
+/// Socketの場合
+async fn raw_socket_run(
+    mut stack: protocol_stack::DefaultPS<network_device::Socket>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    loop {
+        stack.run().await?;
+    }
+}
+
+/// TapDeviceの場合
+async fn tap_device_run(
+    mut stack: protocol_stack::DefaultPS<network_device::TapDevice>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    loop {
+        stack.run().await?;
+    }
 }
