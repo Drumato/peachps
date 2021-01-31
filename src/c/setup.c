@@ -22,16 +22,17 @@ struct NetDevice
 char *if_name_g;
 
 typedef struct NetDevice RawSocket;
-typedef struct NetDevice TapDevice;
+// typedef struct NetDevice TapDevice;
 
-static int create_tap_device(char *device_path, TapDevice *tap_device);
+// static int create_tap_device(char *device_path, TapDevice *tap_device);
 static int set_mac_address(char *interface_name, uint8_t *mac_addr, struct ifreq *ifr);
 static int try_open_raw_socket();
 static int find_dev_interface_index(struct ifreq *ifr, int dev_fd);
 static int bind_address_to_socket(int dev_fd, struct sockaddr_ll *sock_addr, struct ifreq *ifr);
 static int set_promiscuous_mode(int fd, struct ifreq *ifr);
-static int allocate_ip_addr_to_dev();
+// static int allocate_ip_addr_to_dev();
 
+/*
 int _setup_tap_dev(char *device_path, TapDevice *tap_device)
 {
     struct ifreq ifr;
@@ -55,6 +56,7 @@ int _setup_tap_dev(char *device_path, TapDevice *tap_device)
 
     return 0;
 }
+*/
 
 int _setup_raw_sock(char *interface_name, RawSocket *raw_sock)
 {
@@ -168,6 +170,7 @@ static int set_mac_address(char *interface_name, uint8_t *mac_addr, struct ifreq
 }
 
 // TAPデバイスの作成
+/*
 static int create_tap_device(char *device_path, TapDevice *tap_device)
 {
     // TAPデバイスのfdをもらう
@@ -192,9 +195,11 @@ static int create_tap_device(char *device_path, TapDevice *tap_device)
 
     return 0;
 }
+*/
 
 // IPアドレスをTAPデバイスに割り当てる．
 // また，TAPデバイスの起動も行う．
+/*
 static int allocate_ip_addr_to_dev()
 {
     if (system("ip a add 10.0.0.2/24 dev tap0") != 0)
@@ -208,3 +213,4 @@ static int allocate_ip_addr_to_dev()
 
     return 0;
 }
+*/

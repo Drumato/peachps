@@ -13,6 +13,7 @@ pub fn setup_raw_socket(interface_name: String) -> Result<Socket, NetworkDeviceE
                 return Err(NetworkDeviceError::MalformedInterfaceName);
             }
         };
+
         let ret_v = _setup_raw_sock(interface_name.as_ptr(), &mut raw_sock);
         if ret_v == -1 {
             return Err(NetworkDeviceError::FailedToSetupNetworkDevice);
@@ -30,7 +31,7 @@ mod operation_tests {
     #[ignore]
     fn setup_raw_socket_test() {
         // sudo が必要な操作の為ignoreしておく
-        let result = setup_raw_socket("tap0".to_string());
+        let result = setup_raw_socket("eth0".to_string());
         assert!(result.is_ok());
     }
 }

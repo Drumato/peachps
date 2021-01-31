@@ -1,13 +1,15 @@
 use std::io::Cursor;
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder_wrapper::read_u8;
+use internet::InternetProtocolError;
+use transport::TransportProtocol;
 
-use crate::internet;
-
-const IP_BROADCAST_ADDRESS: internet::IPv4Addr = internet::IPv4Addr(0xffffffff);
-
-/// Internet Protocol
-pub struct IP();
+use super::{IPHeader, IPv4Addr, IP_BROADCAST_ADDRESS};
+use crate::{
+    byteorder_wrapper, checksum,
+    internet::{self, InternetProtocol},
+    link, network_device, option, transport, RxResult,
+};
 
 /// プロトコルの動作モード
 enum ProcessMode {
@@ -17,160 +19,206 @@ enum ProcessMode {
     AnotherHost,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum IPError {
-    #[error("frame type is ipv4 but version isn't 4 in vhl")]
-    NotIPv4Packet,
-    #[error("invalid packet length was found")]
-    InvalidPacketLength,
-    #[error("invalid checksum found")]
-    InvalidChecksum,
-    #[error("packet was dead (TTL=0)")]
-    PacketWasDead,
+pub fn rx(
+    opt: option::PeachPSOption,
+    mut rx_result: RxResult,
+    buf: &[u8],
+) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
+    let ip_packet_hdr = parse_ip_packet(buf)?;
+    if opt.debug {
+        eprintln!("++++++++ IP Packet ++++++++");
+        eprintln!("{}", ip_packet_hdr);
+    }
+
+    if ip_packet_hdr.ihl_bytes_from_vhl() > IPHeader::LEAST_LENGTH {
+        return Err(InternetProtocolError::UnsupportedHeaderOption);
+    }
+
+    rx_result.src_ip_addr = ip_packet_hdr.src_addr;
+    let (_, rest) = buf.split_at(ip_packet_hdr.ihl_bytes_from_vhl());
+
+    let _mode = validate_ip_packet(
+        buf,
+        &ip_packet_hdr,
+        opt.ip_addr,
+        opt.network_mask,
+        buf.len(),
+    )?;
+
+    Ok((rx_result, rest.to_vec()))
 }
 
-impl internet::InternetLayer for IP {
-    type PacketHeader = internet::IPHeader;
+pub fn tx<ND: network_device::NetworkDevice>(
+    opt: option::PeachPSOption,
+    dev: &mut ND,
+    tp: TransportProtocol,
+    rx_result: RxResult,
+    tp_payload: Vec<u8>,
+) -> Result<(), InternetProtocolError> {
+    let next_hop = if rx_result.src_ip_addr == internet::ip::IP_BROADCAST_ADDRESS {
+        None
+    } else {
+        // TODO: Find route
+        // TODO: use route to determine next hop
+        Some(rx_result.src_ip_addr)
+    };
+    let id = rand::random::<u16>();
 
-    fn run(&self, buf: &[u8]) -> Result<(internet::IPHeader, Vec<u8>), Box<dyn std::error::Error>> {
-        let static_ip_addr = internet::IPv4Addr::from([192, 168, 7, 167]);
-        let network_mask = internet::IPv4Addr::from([255, 255, 255, 0]);
-        let packet_hdr = self.parse_packet(&buf)?;
-        let header_length = packet_hdr.ihl_bytes_from_vhl();
-        let rest = buf[header_length..].to_vec();
+    // TODO: segmentation
+    tx_core(next_hop, id, opt, dev, rx_result, tp, tp_payload)?;
 
-        let mode =
-            self.validate_ip_packet(buf, &packet_hdr, &static_ip_addr, &network_mask, buf.len())?;
-
-        match mode {
-            ProcessMode::AnotherHost => {
-                // TODO: ルータとしての使用を想定していないので，今の所無視
-            }
-            ProcessMode::Me => {
-                if packet_hdr.is_fragmented() {
-                    // TODO: フラグメントパケットの処理
-                    todo!()
-                }
-
-                // TODO: 上位プロトコルへデータの転送
-            }
-        }
-
-        Ok((packet_hdr, rest))
-    }
+    Ok(())
 }
 
-impl IP {
-    /// IPv4 Packetのパース
-    fn parse_packet(&self, buf: &[u8]) -> Result<internet::IPHeader, Box<dyn std::error::Error>> {
-        let mut reader = Cursor::new(buf);
-        let mut packet_hdr: internet::IPHeader = Default::default();
+fn tx_core<ND: network_device::NetworkDevice>(
+    _next_hop: Option<IPv4Addr>,
+    id: u16,
+    opt: option::PeachPSOption,
+    dev: &mut ND,
+    rx_result: RxResult,
+    tp: TransportProtocol,
+    mut tp_payload: Vec<u8>,
+) -> Result<(), InternetProtocolError> {
+    let mut ip_packet = Vec::<u8>::new();
+    let mut packet_hdr = IPHeader {
+        version_ihl: IPHeader::VERSION4 << 4 | (IPHeader::LEAST_LENGTH >> 2) as u8,
+        type_of_service: 0,
+        total_length: (IPHeader::LEAST_LENGTH + tp_payload.len()) as u16,
+        identification: id,
+        flg_offset: 0x0,
+        time_to_live: 0xff,
+        protocol: tp,
+        checksum: 0,
+        src_addr: opt.ip_addr,
+        dst_addr: rx_result.src_ip_addr,
+    };
 
-        packet_hdr.version_ihl = reader.read_u8()?;
-        packet_hdr.type_of_service = reader.read_u8()?;
-        packet_hdr.total_length = reader.read_u16::<BigEndian>()?;
-        packet_hdr.identification = reader.read_u16::<BigEndian>()?;
-        packet_hdr.flg_offset = reader.read_u16::<BigEndian>()?;
-        packet_hdr.time_to_live = reader.read_u8()?;
+    let mut raw_packet_hdr = packet_hdr.to_bytes(InternetProtocolError::CannotConstructIPPacket)?;
+    packet_hdr.checksum = checksum::calculate_checksum_u16(
+        &raw_packet_hdr,
+        packet_hdr.ihl_bytes_from_vhl() as u16,
+        InternetProtocolError::CannotConstructIPPacket,
+    )?;
+    ip_packet.append(&mut raw_packet_hdr);
+    ip_packet.append(&mut tp_payload);
 
-        packet_hdr.protocol = internet::TransportType::from(reader.read_u8()?);
-        packet_hdr.checksum = reader.read_u16::<BigEndian>()?;
-        packet_hdr.src_addr = internet::IPv4Addr(reader.read_u32::<BigEndian>()?);
-        packet_hdr.dst_addr = internet::IPv4Addr(reader.read_u32::<BigEndian>()?);
+    // TODO: resolve ARP if netdev needs
+    link::ethernet::tx(
+        opt,
+        dev,
+        InternetProtocol::IP,
+        rx_result.src_mac_addr,
+        ip_packet,
+    )?;
 
-        Ok(packet_hdr)
+    Ok(())
+}
+
+fn parse_ip_packet(buf: &[u8]) -> Result<IPHeader, InternetProtocolError> {
+    let mut reader = Cursor::new(buf);
+    let mut packet_hdr: IPHeader = Default::default();
+
+    packet_hdr.version_ihl = byteorder_wrapper::read_u8(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?;
+
+    packet_hdr.type_of_service = byteorder_wrapper::read_u8(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?;
+    packet_hdr.total_length = byteorder_wrapper::read_u16_as_be(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?;
+    packet_hdr.identification = byteorder_wrapper::read_u16_as_be(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?;
+    packet_hdr.flg_offset = byteorder_wrapper::read_u16_as_be(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?;
+    packet_hdr.time_to_live = byteorder_wrapper::read_u8(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?;
+    packet_hdr.protocol = transport::TransportProtocol::from(byteorder_wrapper::read_u8(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?);
+    packet_hdr.checksum = byteorder_wrapper::read_u16_as_be(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?;
+    packet_hdr.src_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?);
+    packet_hdr.dst_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(
+        &mut reader,
+        internet::InternetProtocolError::CannotParsePacketHeader,
+    )?);
+
+    // オプションは読み飛ばす
+    if packet_hdr.ihl_bytes_from_vhl() > IPHeader::LEAST_LENGTH {
+        for _ in 0..(packet_hdr.ihl_bytes_from_vhl() - IPHeader::LEAST_LENGTH) {
+            let _ = read_u8(
+                &mut reader,
+                internet::InternetProtocolError::CannotParsePacketHeader,
+            )?;
+        }
     }
 
-    fn validate_ip_packet(
-        &self,
-        raw_packet: &[u8],
-        packet_hdr: &internet::IPHeader,
-        ip_addr: &internet::IPv4Addr,
-        network_mask: &internet::IPv4Addr,
-        ip_packet_len: usize,
-    ) -> Result<ProcessMode, Box<dyn std::error::Error>> {
-        if packet_hdr.version_from_vhl() != 4 {
-            return Err(Box::new(IPError::NotIPv4Packet));
-        }
+    Ok(packet_hdr)
+}
 
-        // ヘッダに格納されている"IPパケットヘッダ長" もしくは "パケットの全長"が
-        // 実際のバッファサイズより大きければエラーとする
-        if ip_packet_len < (packet_hdr.ihl_bytes_from_vhl())
-            || ip_packet_len < packet_hdr.total_length as usize
-        {
-            return Err(Box::new(IPError::InvalidPacketLength));
-        }
-
-        if self.calculate_checksum(&packet_hdr, raw_packet)? != 0 {
-            return Err(Box::new(IPError::InvalidChecksum));
-        }
-
-        if packet_hdr.time_to_live == 0 {
-            return Err(Box::new(IPError::PacketWasDead));
-        }
-
-        // ホストに向けられたパケットであればOK
-        if ip_addr == &packet_hdr.dst_addr {
-            return Ok(ProcessMode::Me);
-        }
-
-        // ブロードキャストパケットであるかのチェック
-        if ip_addr == &ip_addr.to_broadcast(network_mask) || ip_addr == &IP_BROADCAST_ADDRESS {
-            return Ok(ProcessMode::Me);
-        }
-
-        Ok(ProcessMode::AnotherHost)
+fn validate_ip_packet(
+    raw_packet: &[u8],
+    packet_hdr: &IPHeader,
+    ip_addr: IPv4Addr,
+    network_mask: IPv4Addr,
+    raw_packet_len: usize,
+) -> Result<ProcessMode, internet::InternetProtocolError> {
+    if packet_hdr.version_from_vhl() != 4 {
+        return Err(internet::InternetProtocolError::NotIPv4Packet);
     }
 
-    /// チェックサムの計算
-    /// See also [Header checksum](https://tools.ietf.org/html/rfc791#section-3.1)
-    fn calculate_checksum(
-        &self,
-        packet_hdr: &internet::IPHeader,
-        buf: &[u8],
-    ) -> Result<u16, Box<dyn std::error::Error>> {
-        let mut sum: u32 = 0;
-        let mut size = packet_hdr.ihl_bytes_from_vhl() as u16;
-        let mut reader = Cursor::new(buf);
-
-        loop {
-            if size <= 1 {
-                break;
-            }
-
-            sum += reader.read_u16::<BigEndian>()? as u32;
-            if sum & 0x80000000 != 0 {
-                sum = (sum & 0xffff) + (sum >> 16);
-            }
-            size -= 2;
-        }
-
-        if size == 1 {
-            sum += reader.read_u8()? as u32;
-        }
-
-        loop {
-            if (sum >> 16) == 0 {
-                break;
-            }
-            sum = (sum & 0xffff) + (sum >> 16);
-        }
-
-        Ok(!(sum as u16))
+    // ヘッダに格納されている"IPパケットヘッダ長" もしくは "パケットの全長"が
+    // 実際のバッファサイズより大きければエラーとする
+    if raw_packet_len < (packet_hdr.ihl_bytes_from_vhl())
+        || raw_packet_len < packet_hdr.total_length as usize
+    {
+        return Err(internet::InternetProtocolError::InvalidPacketLength);
     }
+
+    if checksum::calculate_checksum_u16(
+        raw_packet,
+        packet_hdr.ihl_bytes_from_vhl() as u16,
+        internet::InternetProtocolError::InvalidChecksum,
+    )? != 0
+    {
+        return Err(internet::InternetProtocolError::InvalidChecksum);
+    }
+
+    if packet_hdr.time_to_live == 0 {
+        return Err(internet::InternetProtocolError::PacketWasDead);
+    }
+
+    // ホストに向けられたパケットであればOK
+    if ip_addr == packet_hdr.dst_addr {
+        return Ok(ProcessMode::Me);
+    }
+
+    // ブロードキャストパケットであるかのチェック
+    if ip_addr == ip_addr.to_broadcast(network_mask) || ip_addr == IP_BROADCAST_ADDRESS {
+        return Ok(ProcessMode::Me);
+    }
+
+    Ok(ProcessMode::AnotherHost)
 }
 
 #[cfg(test)]
 mod protocol_tests {
     // use super::*;
-
-    #[test]
-    fn parse_packet_test() {
-        /*
-        0x0000:  45c0 00b0 ef80 0000 4001 f977 c0a8 07a3
-        0x0010:  c0a8 07a1 0303 8e23 0000 0000 4500 0094
-        0x0020:  5195 0000 8011 582f c0a8 07a1 c0a8 07a3
-        0x0030:  0035
-        */
-    }
 }

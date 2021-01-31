@@ -1,19 +1,11 @@
 [package]
-name = "peachps"
+name = "icmp_pong"
 version = "0.1.0"
 authors = ["Drumato <drumatech109@gmail.com>"]
 edition = "2018"
-build = "build.rs"
-links = "setup_c"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libc = "0.2.82"
-thiserror = "1.0.23"
-tokio = { version = "1", features = ["full"] }
-byteorder = "1.4.2"
-rand = "0.8.3"
-
-[build-dependencies]
-cc = "1.0"
+peachps = {path = "../../"}
+tokio = "1.1.0"

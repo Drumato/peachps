@@ -1,3 +1,5 @@
+use crate::{byteorder_wrapper, transport};
+
 /// vhl領域のうちversionが該当する部分のマスク
 const VHL_VERSION_MASK: u8 = 0xf0;
 /// vhl領域のうちihlが該当する部分のマスク
@@ -6,6 +8,8 @@ const VHL_IHL_MASK: u8 = 0x0f;
 const FLGOFFSET_FLAG_MASK: u16 = 0xe000;
 /// flag_and_offset領域のうちオフセットが該当する部分のマスク
 const FLGOFFSET_OFFSET_MASK: u16 = 0x1fff;
+/// ブロードキャストアドレス
+pub const IP_BROADCAST_ADDRESS: IPv4Addr = IPv4Addr(0xffffffff);
 
 /// IPパケットのヘッダ構造体
 pub struct IPHeader {
@@ -25,7 +29,7 @@ pub struct IPHeader {
     /// ホップ可能数と読み替えることもできる
     pub time_to_live: u8,
     /// トランスポート層のプロトコルを示す．
-    pub protocol: TransportType,
+    pub protocol: transport::TransportProtocol,
     /// IPヘッダのエラーチェックに使用するチェックサム．
     pub checksum: u16,
     /// 送信元IPアドレス
@@ -34,23 +38,35 @@ pub struct IPHeader {
     pub dst_addr: IPv4Addr,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TransportType {
-    /// Internet Control Message Protocol
-    ICMP,
-    /// Transmission Control Protocol
-    TCP,
-    /// User Diagram Protocol
-    UDP,
-}
-
 /// IPv4 Address
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 pub struct IPv4Addr(pub u32);
 
 impl IPHeader {
+    /// IPヘッダが持つ最低の長さ
+    pub const LEAST_LENGTH: usize = 20;
     /// ラストフラグメント以外のパケットにつけられる
     const MORE_FRAGMENTS_FLAG: u16 = 0x2000;
+    pub const VERSION4: u8 = 4;
+
+    pub fn to_bytes<E>(&self, err: E) -> Result<Vec<u8>, E>
+    where
+        E: std::error::Error + Copy,
+    {
+        let mut buf = Vec::new();
+        byteorder_wrapper::write_u8(&mut buf, self.version_ihl, err)?;
+        byteorder_wrapper::write_u8(&mut buf, self.type_of_service, err)?;
+        byteorder_wrapper::write_u16_as_be(&mut buf, self.total_length, err)?;
+        byteorder_wrapper::write_u16_as_be(&mut buf, self.identification, err)?;
+        byteorder_wrapper::write_u16_as_be(&mut buf, self.flg_offset, err)?;
+        byteorder_wrapper::write_u8(&mut buf, self.time_to_live, err)?;
+        byteorder_wrapper::write_u8(&mut buf, self.protocol.into(), err)?;
+        byteorder_wrapper::write_u16_as_be(&mut buf, self.checksum, err)?;
+        byteorder_wrapper::write_u32_as_be(&mut buf, self.src_addr.0, err)?;
+        byteorder_wrapper::write_u32_as_be(&mut buf, self.dst_addr.0, err)?;
+
+        Ok(buf)
+    }
 
     /// vhl領域からversionだけを取り出す
     pub fn version_from_vhl(&self) -> u8 {
@@ -96,7 +112,7 @@ impl Default for IPHeader {
             identification: 0,
             flg_offset: 0,
             time_to_live: 0,
-            protocol: TransportType::ICMP,
+            protocol: transport::TransportProtocol::ICMP,
             checksum: 0,
             src_addr: Default::default(),
             dst_addr: Default::default(),
@@ -125,7 +141,7 @@ impl std::fmt::Display for IPHeader {
 
 impl IPv4Addr {
     /// 自身のIPアドレスから，ホスト部をすべて1にしたものを返す
-    pub fn to_broadcast(&self, network_mask: &Self) -> Self {
+    pub fn to_broadcast(&self, network_mask: Self) -> Self {
         let host_mask = !network_mask.0;
         Self(self.0 | host_mask)
     }
@@ -152,38 +168,6 @@ impl From<[u8; 4]> for IPv4Addr {
     fn from(v: [u8; 4]) -> Self {
         let v: Vec<u32> = v.iter().map(|b| *b as u32).collect();
         IPv4Addr(v[0] << 24 | v[1] << 16 | v[2] << 8 | v[3])
-    }
-}
-
-impl std::fmt::Display for TransportType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let type_str = match self {
-            TransportType::ICMP => "ICMP",
-            TransportType::TCP => "TCP",
-            TransportType::UDP => "UDP",
-        };
-        write!(f, "{}", type_str)
-    }
-}
-
-impl From<u8> for TransportType {
-    fn from(v: u8) -> Self {
-        match v {
-            1 => TransportType::ICMP,
-            6 => TransportType::TCP,
-            17 => TransportType::UDP,
-            _ => unimplemented!(),
-        }
-    }
-}
-
-impl Into<u8> for TransportType {
-    fn into(self) -> u8 {
-        match self {
-            TransportType::ICMP => 1,
-            TransportType::TCP => 6,
-            TransportType::UDP => 17,
-        }
     }
 }
 

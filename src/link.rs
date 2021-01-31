@@ -1,8 +1,7 @@
 mod mac_address;
 pub use mac_address::*;
 
-mod ethernet;
-pub use ethernet::*;
+pub mod ethernet;
 
-mod interface;
-pub use interface::*;
+mod protocol;
+pub use protocol::*;
