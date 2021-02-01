@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use crate::{byteorder_wrapper, transport};
 
 /// vhl領域のうちversionが該当する部分のマスク
@@ -42,12 +44,52 @@ pub struct IPHeader {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 pub struct IPv4Addr(pub u32);
 
+impl IPv4Addr {
+    pub fn to_bytes<E>(&self, err: E) -> Result<Vec<u8>, E>
+    where
+        E: std::error::Error + Copy,
+    {
+        let mut buf = Vec::new();
+        byteorder_wrapper::write_u32_as_be(&mut buf, self.0, err)?;
+        Ok(buf)
+    }
+}
+
 impl IPHeader {
     /// IPヘッダが持つ最低の長さ
     pub const LEAST_LENGTH: usize = 20;
     /// ラストフラグメント以外のパケットにつけられる
     const MORE_FRAGMENTS_FLAG: u16 = 0x2000;
     pub const VERSION4: u8 = 4;
+
+    pub fn new_from_bytes<E>(buf: &[u8], err: E) -> Result<Self, E>
+    where
+        E: std::error::Error + Copy,
+    {
+        let mut reader = Cursor::new(buf);
+        let mut packet_hdr: IPHeader = Default::default();
+
+        packet_hdr.version_ihl = byteorder_wrapper::read_u8(&mut reader, err)?;
+
+        packet_hdr.type_of_service = byteorder_wrapper::read_u8(&mut reader, err)?;
+        packet_hdr.total_length = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+        packet_hdr.identification = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+        packet_hdr.flg_offset = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+        packet_hdr.time_to_live = byteorder_wrapper::read_u8(&mut reader, err)?;
+        packet_hdr.protocol =
+            transport::TransportProtocol::from(byteorder_wrapper::read_u8(&mut reader, err)?);
+        packet_hdr.checksum = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+        packet_hdr.src_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(&mut reader, err)?);
+        packet_hdr.dst_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(&mut reader, err)?);
+
+        // オプションは読み飛ばす
+        if packet_hdr.ihl_bytes_from_vhl() > Self::LEAST_LENGTH {
+            for _ in 0..(packet_hdr.ihl_bytes_from_vhl() - Self::LEAST_LENGTH) {
+                let _ = byteorder_wrapper::read_u8(&mut reader, err)?;
+            }
+        }
+        Ok(packet_hdr)
+    }
 
     pub fn to_bytes<E>(&self, err: E) -> Result<Vec<u8>, E>
     where
@@ -62,8 +104,8 @@ impl IPHeader {
         byteorder_wrapper::write_u8(&mut buf, self.time_to_live, err)?;
         byteorder_wrapper::write_u8(&mut buf, self.protocol.into(), err)?;
         byteorder_wrapper::write_u16_as_be(&mut buf, self.checksum, err)?;
-        byteorder_wrapper::write_u32_as_be(&mut buf, self.src_addr.0, err)?;
-        byteorder_wrapper::write_u32_as_be(&mut buf, self.dst_addr.0, err)?;
+        buf.append(&mut self.src_addr.to_bytes(err)?);
+        buf.append(&mut self.dst_addr.to_bytes(err)?);
 
         Ok(buf)
     }
@@ -164,6 +206,7 @@ impl Default for IPv4Addr {
         Self(0x00)
     }
 }
+
 impl From<[u8; 4]> for IPv4Addr {
     fn from(v: [u8; 4]) -> Self {
         let v: Vec<u32> = v.iter().map(|b| *b as u32).collect();
@@ -172,13 +215,42 @@ impl From<[u8; 4]> for IPv4Addr {
 }
 
 #[cfg(test)]
-mod display_tests {
+mod tests {
+    use transport::TransportProtocol;
+
+    use crate::internet::InternetProtocolError;
+
     use super::*;
 
     #[test]
     fn display_address_test() {
         let addr = IPv4Addr::from([192, 168, 11, 24]);
-
         assert_eq!("192.168.11.24", addr.to_string());
+        let addr = IPv4Addr(0xc0a80b03);
+        assert_eq!("192.168.11.3", addr.to_string());
+    }
+
+    #[test]
+    fn parse_ip_packet_test() {
+        let raw_packet = [
+            0x45, 0x00, 0x00, 0x3c, 0x19, 0x17, 0x00, 0x00, 0x40, 0x01, 0xca, 0x55, 0xc0, 0xa8,
+            0x0b, 0x01, 0xc0, 0xa8, 0x0b, 0x03,
+        ];
+        let result =
+            IPHeader::new_from_bytes(&raw_packet, InternetProtocolError::CannotParsePacketHeader);
+        assert!(result.is_ok());
+        let packet_hdr = result.unwrap();
+        assert_eq!(4, packet_hdr.version_from_vhl());
+        assert_eq!(20, packet_hdr.ihl_bytes_from_vhl());
+        assert_eq!(0, packet_hdr.type_of_service);
+        assert_eq!(60, packet_hdr.total_length);
+        assert_eq!(0x1917, packet_hdr.identification);
+        assert_eq!(0x0, packet_hdr.flag_from_flg_offset());
+        assert_eq!(0x0, packet_hdr.offset_from_flg_offset());
+        assert_eq!(64, packet_hdr.time_to_live);
+        assert_eq!(TransportProtocol::ICMP, packet_hdr.protocol);
+        assert_eq!(0xca55, packet_hdr.checksum);
+        assert_eq!("192.168.11.1", packet_hdr.src_addr.to_string());
+        assert_eq!("192.168.11.3", packet_hdr.dst_addr.to_string());
     }
 }

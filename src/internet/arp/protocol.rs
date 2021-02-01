@@ -1,76 +1,77 @@
-use std::io::Cursor;
-
 use crate::{
-    byteorder_wrapper,
-    internet::{ip::IPv4Addr, InternetProtocol, InternetProtocolError},
-    link::LinkProtocol,
-    option, RxResult,
+    internet::{InternetProtocol, InternetProtocolError},
+    link::ethernet,
+    network_device, option, RxResult,
 };
 
 use super::{ARPHeader, Operation};
 
-pub fn rx(
+pub fn rx<ND: network_device::NetworkDevice>(
     opt: option::PeachPSOption,
-    rx_result: RxResult,
+    dev: &mut ND,
+    _rx_result: RxResult,
     buf: &[u8],
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
-    let arp_packet_hdr = parse_arp_packet(buf)?;
+    let arp_packet_hdr =
+        ARPHeader::new_from_bytes(buf, InternetProtocolError::CannotParsePacketHeader)?;
+
     if opt.debug {
         eprintln!("++++++++ ARP Packet ++++++++");
         eprintln!("{}", arp_packet_hdr);
     }
 
+    if arp_packet_hdr.operation == Operation::Request {
+        tx_reply(opt, dev, &arp_packet_hdr)?;
+    }
+
     todo!()
 }
 
-fn parse_arp_packet(buf: &[u8]) -> Result<ARPHeader, InternetProtocolError> {
-    let mut reader = Cursor::new(buf);
-    let mut packet_hdr: ARPHeader = Default::default();
+#[allow(dead_code)]
+fn tx_request<ND: network_device::NetworkDevice>(
+    opt: option::PeachPSOption,
+    dev: &mut ND,
+    receive_arp_packet: &ARPHeader,
+) -> Result<(), InternetProtocolError> {
+    tx(opt, dev, Operation::Request, receive_arp_packet)
+}
 
-    packet_hdr.link_type = match byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        InternetProtocolError::CannotParsePacketHeader,
-    )? {
-        1 => LinkProtocol::Ethernet,
-        n => panic!("unsupported hardware address space => {}", n),
-    };
-    packet_hdr.internet_type = match byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        InternetProtocolError::CannotParsePacketHeader,
-    )? {
-        0x0800 => InternetProtocol::IP,
-        n => panic!("unsupported protocol address space => {}", n),
-    };
-    packet_hdr.link_addr_length =
-        byteorder_wrapper::read_u8(&mut reader, InternetProtocolError::CannotParsePacketHeader)?;
-    packet_hdr.internet_addr_length =
-        byteorder_wrapper::read_u8(&mut reader, InternetProtocolError::CannotParsePacketHeader)?;
-    packet_hdr.operation = Operation::from(byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        InternetProtocolError::CannotParsePacketHeader,
-    )?);
+fn tx_reply<ND: network_device::NetworkDevice>(
+    opt: option::PeachPSOption,
+    dev: &mut ND,
+    receive_arp_packet: &ARPHeader,
+) -> Result<(), InternetProtocolError> {
+    tx(opt, dev, Operation::Reply, receive_arp_packet)
+}
 
-    for i in 0..6 {
-        packet_hdr.src_link_addr.0[i] = byteorder_wrapper::read_u8(
-            &mut reader,
-            InternetProtocolError::CannotParsePacketHeader,
-        )?;
-    }
+fn tx<ND: network_device::NetworkDevice>(
+    opt: option::PeachPSOption,
+    dev: &mut ND,
+    op: Operation,
+    receive_arp_packet: &ARPHeader,
+) -> Result<(), InternetProtocolError> {
+    let mut send_arp_packet: ARPHeader = Default::default();
+    // 殆どの部分は，受信したパケットの値をコピーするだけで良い
+    send_arp_packet.link_type = receive_arp_packet.link_type;
+    send_arp_packet.internet_type = receive_arp_packet.internet_type;
+    send_arp_packet.src_link_addr = receive_arp_packet.dst_link_addr;
+    send_arp_packet.src_internet_addr = receive_arp_packet.dst_internet_addr;
+    send_arp_packet.internet_addr_length = receive_arp_packet.internet_addr_length;
+    send_arp_packet.link_addr_length = receive_arp_packet.link_addr_length;
 
-    packet_hdr.src_internet_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(
-        &mut reader,
-        InternetProtocolError::CannotParsePacketHeader,
-    )?);
+    send_arp_packet.operation = op;
 
-    for i in 0..6 {
-        packet_hdr.dst_link_addr.0[i] = byteorder_wrapper::read_u8(
-            &mut reader,
-            InternetProtocolError::CannotParsePacketHeader,
-        )?;
-    }
-    packet_hdr.dst_internet_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(
-        &mut reader,
-        InternetProtocolError::CannotParsePacketHeader,
-    )?);
-    Ok(packet_hdr)
+    // 自身のアドレスを書き込んで教える
+    send_arp_packet.dst_link_addr = opt.dev_addr;
+    send_arp_packet.dst_internet_addr = opt.ip_addr;
+
+    ethernet::tx(
+        opt,
+        dev,
+        InternetProtocol::ARP,
+        receive_arp_packet.src_link_addr,
+        send_arp_packet.to_bytes(InternetProtocolError::CannotConstructPacket)?,
+    )?;
+
+    Ok(())
 }

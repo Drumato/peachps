@@ -1,5 +1,3 @@
-use std::io::Cursor;
-
 use super::{MessageHeader, MessageType};
 use crate::{
     byteorder_wrapper,
@@ -15,7 +13,9 @@ pub fn rx<ND: network_device::NetworkDevice>(
     rx_result: RxResult,
     buf: &[u8],
 ) -> Result<(MessageHeader, Vec<u8>), TransportProtocolError> {
-    let header = parse_icmp_message_header(buf)?;
+    let header =
+        MessageHeader::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
+
     if opt.debug {
         eprintln!("++++++++ ICMP Message ++++++++");
         eprintln!("{}", header);
@@ -59,23 +59,4 @@ pub fn tx<ND: network_device::NetworkDevice>(
         Ok(_) => Ok(()),
         Err(e) => Err(TransportProtocolError::IPError { e }),
     }
-}
-
-fn parse_icmp_message_header(buf: &[u8]) -> Result<MessageHeader, TransportProtocolError> {
-    let mut reader = Cursor::new(buf);
-    let mut message_header: MessageHeader = Default::default();
-
-    let message_type =
-        byteorder_wrapper::read_u8(&mut reader, TransportProtocolError::CannotParseICMPMessage)?;
-
-    message_header.ty = MessageType::from(message_type);
-    message_header.code =
-        byteorder_wrapper::read_u8(&mut reader, TransportProtocolError::CannotParseICMPMessage)?;
-    message_header.checksum = byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        TransportProtocolError::CannotParseICMPMessage,
-    )?;
-
-    eprintln!("succeed to parse icmp message");
-    Ok(message_header)
 }

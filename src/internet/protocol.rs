@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{internet, link::LinkProtocolError, network_device, option, RxResult};
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InternetProtocol {
     IP,
     ARP,
@@ -22,8 +22,8 @@ pub enum InternetProtocolError {
     CannotParsePacketHeader,
     #[error("ignore this packet")]
     Ignore,
-    #[error("cannot construct ip packet")]
-    CannotConstructIPPacket,
+    #[error("cannot construct packet")]
+    CannotConstructPacket,
     #[error("{e:}")]
     LinkError { e: LinkProtocolError },
     #[error("unsupported header option")]
@@ -32,7 +32,7 @@ pub enum InternetProtocolError {
 
 pub fn rx<ND: network_device::NetworkDevice>(
     opt: option::PeachPSOption,
-    _dev: &mut ND,
+    dev: &mut ND,
     expected: &HashSet<InternetProtocol>,
     rx_result: RxResult,
     buf: &[u8],
@@ -43,7 +43,7 @@ pub fn rx<ND: network_device::NetworkDevice>(
 
     match rx_result.ip_type {
         InternetProtocol::IP => internet::ip::rx(opt, rx_result, buf),
-        // InternetProtocol::ARP => internet::arp::rx(opt, rx_result, buf),
+        InternetProtocol::ARP => internet::arp::rx(opt, dev, rx_result, buf),
         _ => unimplemented!(),
     }
 }

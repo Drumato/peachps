@@ -1,4 +1,6 @@
-use crate::transport::TransportHeader;
+use std::io::Cursor;
+
+use crate::{byteorder_wrapper, transport::TransportHeader};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MessageHeader {
@@ -23,6 +25,22 @@ pub enum MessageType {
 
 impl MessageHeader {
     pub const LENGTH: usize = 4;
+
+    pub fn new_from_bytes<E>(buf: &[u8], err: E) -> Result<Self, E>
+    where
+        E: std::error::Error + Copy,
+    {
+        let mut reader = Cursor::new(buf);
+        let mut message_header: MessageHeader = Default::default();
+
+        let message_type = byteorder_wrapper::read_u8(&mut reader, err)?;
+
+        message_header.ty = MessageType::from(message_type);
+        message_header.code = byteorder_wrapper::read_u8(&mut reader, err)?;
+        message_header.checksum = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+
+        Ok(message_header)
+    }
 }
 
 impl TransportHeader for MessageHeader {}
@@ -80,5 +98,27 @@ impl Into<u8> for MessageType {
             MessageType::EchoRequest => 8,
             MessageType::TimeExceeded => 11,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::transport::TransportProtocolError;
+
+    use super::*;
+
+    #[test]
+    fn parse_icmp_message_test() {
+        let raw_message = [0x00, 0x00, 0x55, 0x49];
+        let result = MessageHeader::new_from_bytes(
+            &raw_message,
+            TransportProtocolError::CannotParseICMPMessage,
+        );
+        assert!(result.is_ok());
+        let message_hdr = result.unwrap();
+        assert_eq!(MessageType::EchoReply, message_hdr.ty);
+        assert_eq!(0, message_hdr.code);
+        assert_eq!(0x5549, message_hdr.checksum);
     }
 }

@@ -1,12 +1,9 @@
-use std::io::Cursor;
-
-use byteorder_wrapper::read_u8;
 use internet::InternetProtocolError;
 use transport::TransportProtocol;
 
 use super::{IPHeader, IPv4Addr, IP_BROADCAST_ADDRESS};
 use crate::{
-    byteorder_wrapper, checksum,
+    checksum,
     internet::{self, InternetProtocol},
     link, network_device, option, transport, RxResult,
 };
@@ -24,7 +21,8 @@ pub fn rx(
     mut rx_result: RxResult,
     buf: &[u8],
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
-    let ip_packet_hdr = parse_ip_packet(buf)?;
+    let ip_packet_hdr =
+        IPHeader::new_from_bytes(buf, InternetProtocolError::CannotParsePacketHeader)?;
     if opt.debug {
         eprintln!("++++++++ IP Packet ++++++++");
         eprintln!("{}", ip_packet_hdr);
@@ -93,11 +91,11 @@ fn tx_core<ND: network_device::NetworkDevice>(
         dst_addr: rx_result.src_ip_addr,
     };
 
-    let mut raw_packet_hdr = packet_hdr.to_bytes(InternetProtocolError::CannotConstructIPPacket)?;
+    let mut raw_packet_hdr = packet_hdr.to_bytes(InternetProtocolError::CannotConstructPacket)?;
     packet_hdr.checksum = checksum::calculate_checksum_u16(
         &raw_packet_hdr,
         packet_hdr.ihl_bytes_from_vhl() as u16,
-        InternetProtocolError::CannotConstructIPPacket,
+        InternetProtocolError::CannotConstructPacket,
     )?;
     ip_packet.append(&mut raw_packet_hdr);
     ip_packet.append(&mut tp_payload);
@@ -112,65 +110,6 @@ fn tx_core<ND: network_device::NetworkDevice>(
     )?;
 
     Ok(())
-}
-
-fn parse_ip_packet(buf: &[u8]) -> Result<IPHeader, InternetProtocolError> {
-    let mut reader = Cursor::new(buf);
-    let mut packet_hdr: IPHeader = Default::default();
-
-    packet_hdr.version_ihl = byteorder_wrapper::read_u8(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?;
-
-    packet_hdr.type_of_service = byteorder_wrapper::read_u8(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?;
-    packet_hdr.total_length = byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?;
-    packet_hdr.identification = byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?;
-    packet_hdr.flg_offset = byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?;
-    packet_hdr.time_to_live = byteorder_wrapper::read_u8(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?;
-    packet_hdr.protocol = transport::TransportProtocol::from(byteorder_wrapper::read_u8(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?);
-    packet_hdr.checksum = byteorder_wrapper::read_u16_as_be(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?;
-    packet_hdr.src_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?);
-    packet_hdr.dst_addr = IPv4Addr(byteorder_wrapper::read_u32_as_be(
-        &mut reader,
-        internet::InternetProtocolError::CannotParsePacketHeader,
-    )?);
-
-    // オプションは読み飛ばす
-    if packet_hdr.ihl_bytes_from_vhl() > IPHeader::LEAST_LENGTH {
-        for _ in 0..(packet_hdr.ihl_bytes_from_vhl() - IPHeader::LEAST_LENGTH) {
-            let _ = read_u8(
-                &mut reader,
-                internet::InternetProtocolError::CannotParsePacketHeader,
-            )?;
-        }
-    }
-
-    Ok(packet_hdr)
 }
 
 fn validate_ip_packet(

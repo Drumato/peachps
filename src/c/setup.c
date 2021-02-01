@@ -102,7 +102,7 @@ int _setup_raw_sock(char *interface_name, RawSocket *raw_sock)
 
 static int try_open_raw_socket()
 {
-    int fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    int fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     return fd;
 }
 
@@ -118,7 +118,7 @@ static int find_dev_interface_index(struct ifreq *ifr, int dev_fd)
 // ソケットにアドレスを割り当てる
 static int bind_address_to_socket(int dev_fd, struct sockaddr_ll *sock_addr, struct ifreq *ifr)
 {
-    sock_addr->sll_family = AF_PACKET;
+    sock_addr->sll_family = PF_PACKET;
     sock_addr->sll_protocol = htons(ETH_P_ALL);
     sock_addr->sll_ifindex = ifr->ifr_ifindex;
 
@@ -137,7 +137,7 @@ static int set_promiscuous_mode(int fd, struct ifreq *ifr)
     {
         return -1;
     }
-    ifr->ifr_flags = ifr->ifr_flags | IFF_PROMISC;
+    ifr->ifr_flags = ifr->ifr_flags | IFF_PROMISC | IFF_UP | IFF_RUNNING;
 
     if (ioctl(fd, SIOCSIFFLAGS, ifr) == -1)
     {

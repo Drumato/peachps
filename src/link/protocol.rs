@@ -6,7 +6,7 @@ use super::ethernet;
 
 pub const MTU: usize = 1500;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LinkProtocol {
     Ethernet,
 }
@@ -47,8 +47,9 @@ pub fn rx(
 
             let result = RxResult {
                 src_mac_addr: frame_header.src_addr,
-
-                ..Default::default()
+                src_ip_addr: Default::default(),
+                ip_type: frame_header.ty,
+                tp_type: Default::default(),
             };
             Ok((result, rest))
         }
