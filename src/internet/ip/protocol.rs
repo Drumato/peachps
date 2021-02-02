@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use internet::InternetProtocolError;
 use transport::TransportProtocol;
 
@@ -33,7 +35,8 @@ pub fn rx(
     }
 
     rx_result.src_ip_addr = ip_packet_hdr.src_addr;
-    let (_, rest) = buf.split_at(ip_packet_hdr.ihl_bytes_from_vhl());
+    rx_result.tp_type = ip_packet_hdr.protocol;
+    let (_, rest) = buf.split_at(ip_packet_hdr.ihl_bytes_from_vhl() as usize);
 
     let _mode = validate_ip_packet(
         buf,
@@ -52,6 +55,7 @@ pub fn tx<ND: network_device::NetworkDevice>(
     tp: TransportProtocol,
     rx_result: RxResult,
     tp_payload: Vec<u8>,
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(), InternetProtocolError> {
     let next_hop = if rx_result.src_ip_addr == internet::ip::IP_BROADCAST_ADDRESS {
         None
@@ -63,7 +67,7 @@ pub fn tx<ND: network_device::NetworkDevice>(
     let id = rand::random::<u16>();
 
     // TODO: segmentation
-    tx_core(next_hop, id, opt, dev, rx_result, tp, tp_payload)?;
+    tx_core(next_hop, id, opt, dev, rx_result, tp, tp_payload, arp_cache)?;
 
     Ok(())
 }
@@ -76,12 +80,14 @@ fn tx_core<ND: network_device::NetworkDevice>(
     rx_result: RxResult,
     tp: TransportProtocol,
     mut tp_payload: Vec<u8>,
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(), InternetProtocolError> {
     let mut ip_packet = Vec::<u8>::new();
     let mut packet_hdr = IPHeader {
-        version_ihl: IPHeader::VERSION4 << 4 | (IPHeader::LEAST_LENGTH >> 2) as u8,
+        version_ihl: IPHeader::VERSION4.checked_shl(4).unwrap()
+            | IPHeader::LEAST_LENGTH.checked_shr(2).unwrap() as u8,
         type_of_service: 0,
-        total_length: (IPHeader::LEAST_LENGTH + tp_payload.len()) as u16,
+        total_length: (IPHeader::LEAST_LENGTH as usize + tp_payload.len()) as u16,
         identification: id,
         flg_offset: 0x0,
         time_to_live: 0xff,
@@ -91,22 +97,35 @@ fn tx_core<ND: network_device::NetworkDevice>(
         dst_addr: rx_result.src_ip_addr,
     };
 
-    let mut raw_packet_hdr = packet_hdr.to_bytes(InternetProtocolError::CannotConstructPacket)?;
+    let raw_packet_hdr = packet_hdr.to_bytes(InternetProtocolError::CannotConstructPacket)?;
     packet_hdr.checksum = checksum::calculate_checksum_u16(
         &raw_packet_hdr,
         packet_hdr.ihl_bytes_from_vhl() as u16,
         InternetProtocolError::CannotConstructPacket,
     )?;
-    ip_packet.append(&mut raw_packet_hdr);
+    ip_packet.append(&mut packet_hdr.to_bytes(InternetProtocolError::CannotConstructPacket)?);
     ip_packet.append(&mut tp_payload);
 
+    if opt.debug {
+        eprintln!("++++++++ tx ip packet ++++++++");
+        eprintln!("{}", packet_hdr);
+    }
+
     // TODO: resolve ARP if netdev needs
+    let dst_mac_addr = match arp_cache.get(&rx_result.src_ip_addr) {
+        Some(a) => *a,
+        None => {
+            internet::arp::tx_request(opt, dev, rx_result.src_ip_addr, arp_cache)?;
+            *arp_cache.get(&rx_result.src_ip_addr).unwrap()
+        }
+    };
     link::ethernet::tx(
         opt,
         dev,
         InternetProtocol::IP,
-        rx_result.src_mac_addr,
+        dst_mac_addr,
         ip_packet,
+        arp_cache,
     )?;
 
     Ok(())
@@ -125,7 +144,7 @@ fn validate_ip_packet(
 
     // ヘッダに格納されている"IPパケットヘッダ長" もしくは "パケットの全長"が
     // 実際のバッファサイズより大きければエラーとする
-    if raw_packet_len < (packet_hdr.ihl_bytes_from_vhl())
+    if raw_packet_len < (packet_hdr.ihl_bytes_from_vhl().into())
         || raw_packet_len < packet_hdr.total_length as usize
     {
         return Err(internet::InternetProtocolError::InvalidPacketLength);

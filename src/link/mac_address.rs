@@ -49,16 +49,29 @@ impl From<[u8; 6]> for MacAddress {
         Self(addr)
     }
 }
+impl From<&str> for MacAddress {
+    fn from(s: &str) -> Self {
+        let mut iter = s.split(":").map(|v| u8::from_str_radix(v, 16).unwrap());
+        Self([
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+        ])
+    }
+}
 
 impl Into<u64> for MacAddress {
     fn into(self) -> u64 {
-        let mut v = 0;
-        for (i, b) in self.0.iter().enumerate() {
-            v |= (b >> (i * 8)) as u64;
-        }
-        v
+        let addr = [
+            0x00, 0x00, self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5],
+        ];
+        u64::from_be_bytes(addr)
     }
 }
+
 impl Default for MacAddress {
     fn default() -> Self {
         Self([0x00; 6])
@@ -66,13 +79,24 @@ impl Default for MacAddress {
 }
 
 #[cfg(test)]
-mod display_tests {
+mod tests {
     use super::*;
 
     #[test]
     fn display_address_test() {
         let addr = MacAddress([12, 34, 56, 78, 90, 12]);
-
         assert_eq!("0c:22:38:4e:5a:0c", addr.to_string());
+    }
+
+    #[test]
+    fn address_from_str_test() {
+        let addr = MacAddress::from("0c:22:38:4e:5a:0c");
+        assert_eq!(MacAddress([12, 34, 56, 78, 90, 12]), addr);
+    }
+
+    #[test]
+    fn into_test() {
+        let addr = MacAddress([0x12, 0x34, 0x56, 0x78, 0x90, 0x12]);
+        assert_eq!(0x123456789012 as u64, addr.into());
     }
 }

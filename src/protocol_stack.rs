@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::network_device;
 use crate::{internet, link, option, transport};
@@ -35,7 +35,7 @@ pub struct RxResult {
 }
 
 fn rx_datalink<ND>(
-    mut opt: option::PeachPSOption,
+    opt: option::PeachPSOption,
     dev: &mut ND,
     lp: link::LinkProtocol,
 ) -> Result<(RxResult, Vec<u8>), PeachPSError>
@@ -50,7 +50,6 @@ where
         return Err(PeachPSError::EOF);
     }
 
-    opt.dev_addr = dev.device_addr();
     let (result, rest) = link::rx(opt, lp, &buf)?;
 
     Ok((result, rest))
@@ -61,12 +60,13 @@ fn rx_internet<ND>(
     dev: &mut ND,
     lp: link::LinkProtocol,
     ips: &HashSet<internet::InternetProtocol>,
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(RxResult, Vec<u8>), PeachPSError>
 where
     ND: network_device::NetworkDevice,
 {
     let (link_ex_result, raw_ip_packet) = rx_datalink(opt, dev, lp)?;
-    let (result, rest) = internet::rx(opt, dev, ips, link_ex_result, &raw_ip_packet)?;
+    let (result, rest) = internet::rx(opt, dev, ips, link_ex_result, &raw_ip_packet, arp_cache)?;
 
     Ok((result, rest))
 }
@@ -77,10 +77,11 @@ fn rx_transport<ND: network_device::NetworkDevice>(
     lp: link::LinkProtocol,
     ips: &HashSet<internet::InternetProtocol>,
     tps: &HashSet<transport::TransportProtocol>,
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<Vec<u8>, PeachPSError> {
-    let (result, raw_segment) = rx_internet(opt, dev, lp, ips)?;
+    let (result, raw_segment) = rx_internet(opt, dev, lp, ips, arp_cache)?;
 
-    let data = transport::rx(opt, dev, tps, result, &raw_segment)?;
+    let data = transport::rx(opt, dev, tps, result, &raw_segment, arp_cache)?;
 
     Ok(data)
 }
@@ -97,8 +98,11 @@ pub async fn run<ND: network_device::NetworkDevice>(
         eprintln!("Network Mask: {}", opt.network_mask);
     }
 
+    let mut arp_cache: HashMap<internet::ip::IPv4Addr, link::MacAddress> =
+        HashMap::with_capacity(16);
+
     loop {
-        match rx_transport(opt, dev, lp, ips, tps) {
+        match rx_transport(opt, dev, lp, ips, tps, &mut arp_cache) {
             Ok(_data) => {}
             Err(e) => match e {
                 PeachPSError::Ignore => {

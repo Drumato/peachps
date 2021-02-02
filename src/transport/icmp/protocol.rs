@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use super::{MessageHeader, MessageType};
 use crate::{
-    byteorder_wrapper,
+    checksum,
     internet::{self},
-    network_device, option,
+    link, network_device, option,
     transport::{TransportProtocol, TransportProtocolError},
     RxResult,
 };
@@ -12,6 +14,7 @@ pub fn rx<ND: network_device::NetworkDevice>(
     dev: &mut ND,
     rx_result: RxResult,
     buf: &[u8],
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(MessageHeader, Vec<u8>), TransportProtocolError> {
     let header =
         MessageHeader::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
@@ -25,7 +28,14 @@ pub fn rx<ND: network_device::NetworkDevice>(
 
     if header.ty == MessageType::EchoRequest {
         // srcとdstの関係が逆になるので注意
-        tx(opt, dev, MessageType::EchoReply, header.code, rx_result)?;
+        tx(
+            opt,
+            dev,
+            MessageType::EchoReply,
+            header.code,
+            rx_result,
+            arp_cache,
+        )?;
     }
 
     Ok((header, rest.to_vec()))
@@ -37,25 +47,34 @@ pub fn tx<ND: network_device::NetworkDevice>(
     msg_type: MessageType,
     code: u8,
     rx_result: RxResult,
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(), TransportProtocolError> {
-    let mut icmp_message = Vec::<u8>::new();
-    byteorder_wrapper::write_u8(
-        &mut icmp_message,
-        msg_type.into(),
-        TransportProtocolError::CannotConstructICMPMessage,
-    )?;
-    byteorder_wrapper::write_u8(
-        &mut icmp_message,
+    let mut icmp_message = MessageHeader {
+        ty: msg_type,
         code,
-        TransportProtocolError::CannotConstructICMPMessage,
+        checksum: 0x00,
+    };
+    let before_buf = icmp_message.to_bytes(TransportProtocolError::CannotConstructICMPMessage)?;
+    let cksum = checksum::calculate_checksum_u16(
+        &before_buf,
+        before_buf.len() as u16,
+        TransportProtocolError::InvalidChecksum,
     )?;
-    byteorder_wrapper::write_u16_as_be(
-        &mut icmp_message,
-        0x00,
-        TransportProtocolError::CannotConstructICMPMessage,
-    )?;
+    icmp_message.checksum = cksum;
 
-    match internet::ip::tx(opt, dev, TransportProtocol::ICMP, rx_result, icmp_message) {
+    if opt.debug {
+        eprintln!("++++++++ tx icmp message ++++++++");
+        eprintln!("{}", icmp_message);
+    }
+
+    match internet::ip::tx(
+        opt,
+        dev,
+        TransportProtocol::ICMP,
+        rx_result,
+        icmp_message.to_bytes(TransportProtocolError::CannotConstructICMPMessage)?,
+        arp_cache,
+    ) {
         Ok(_) => Ok(()),
         Err(e) => Err(TransportProtocolError::IPError { e }),
     }

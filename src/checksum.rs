@@ -20,7 +20,7 @@ where
         sum += byteorder_wrapper::read_u16_as_be(&mut reader, err)? as u32;
 
         if sum & 0x80000000 != 0 {
-            sum = (sum & 0xffff) + (sum >> 16);
+            sum = (sum & 0xffff) + sum.checked_shr(16).unwrap();
         }
         size -= 2;
     }
@@ -30,10 +30,10 @@ where
     }
 
     loop {
-        if (sum >> 16) == 0 {
+        if sum.checked_shr(16).unwrap() == 0 {
             break;
         }
-        sum = (sum & 0xffff) + (sum >> 16);
+        sum = (sum & 0xffff) + sum.checked_shr(16).unwrap();
     }
 
     Ok(!(sum as u16))

@@ -41,7 +41,7 @@ pub struct IPHeader {
 }
 
 /// IPv4 Address
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone, Hash)]
 pub struct IPv4Addr(pub u32);
 
 impl IPv4Addr {
@@ -57,7 +57,7 @@ impl IPv4Addr {
 
 impl IPHeader {
     /// IPヘッダが持つ最低の長さ
-    pub const LEAST_LENGTH: usize = 20;
+    pub const LEAST_LENGTH: u8 = 20;
     /// ラストフラグメント以外のパケットにつけられる
     const MORE_FRAGMENTS_FLAG: u16 = 0x2000;
     pub const VERSION4: u8 = 4;
@@ -88,6 +88,7 @@ impl IPHeader {
                 let _ = byteorder_wrapper::read_u8(&mut reader, err)?;
             }
         }
+
         Ok(packet_hdr)
     }
 
@@ -112,18 +113,24 @@ impl IPHeader {
 
     /// vhl領域からversionだけを取り出す
     pub fn version_from_vhl(&self) -> u8 {
-        (self.version_ihl & VHL_VERSION_MASK) >> 4
+        (self.version_ihl & VHL_VERSION_MASK)
+            .checked_shr(4)
+            .unwrap()
     }
     /// vhl領域からihlだけを取り出す
     /// IPヘッダ長を4で割った値(32bitワードの数)であるため，
     /// 2ビット左シフトしてバイト単位に直す
-    pub fn ihl_bytes_from_vhl(&self) -> usize {
-        ((self.version_ihl & VHL_IHL_MASK) as usize) << 2
+    pub fn ihl_bytes_from_vhl(&self) -> u8 {
+        (self.version_ihl & VHL_IHL_MASK).checked_shl(2).unwrap()
     }
+
     /// flag_and_offset領域からフラグだけを取り出す
     pub fn flag_from_flg_offset(&self) -> u16 {
-        (self.flg_offset & FLGOFFSET_FLAG_MASK) >> 13
+        (self.flg_offset & FLGOFFSET_FLAG_MASK)
+            .checked_shr(13)
+            .unwrap()
     }
+
     /// flag_and_offset領域からフラグメントオフセットだけを取り出す
     pub fn offset_from_flg_offset(&self) -> u16 {
         self.flg_offset & FLGOFFSET_OFFSET_MASK
@@ -137,7 +144,7 @@ impl IPHeader {
 
     /// ラストフラグメント以外のフラグメンテーションされたパケットかどうかチェック
     fn is_wip_fragment(&self) -> bool {
-        (self.flag_from_flg_offset() & Self::MORE_FRAGMENTS_FLAG) != 0
+        (self.flg_offset & Self::MORE_FRAGMENTS_FLAG) != 0
     }
 
     fn is_last_fragment(&self) -> bool {
@@ -188,6 +195,17 @@ impl IPv4Addr {
         Self(self.0 | host_mask)
     }
 }
+impl From<&str> for IPv4Addr {
+    fn from(s: &str) -> Self {
+        let mut iter = s.split(".").map(|v| u32::from_str_radix(v, 10).unwrap());
+        Self(
+            iter.next().unwrap() << 24
+                | iter.next().unwrap() << 16
+                | iter.next().unwrap() << 8
+                | iter.next().unwrap(),
+        )
+    }
+}
 
 impl std::fmt::Display for IPv4Addr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -201,6 +219,7 @@ impl std::fmt::Display for IPv4Addr {
         write!(f, "{}", addr_str)
     }
 }
+
 impl Default for IPv4Addr {
     fn default() -> Self {
         Self(0x00)
@@ -228,6 +247,12 @@ mod tests {
         assert_eq!("192.168.11.24", addr.to_string());
         let addr = IPv4Addr(0xc0a80b03);
         assert_eq!("192.168.11.3", addr.to_string());
+    }
+
+    #[test]
+    fn address_from_str_test() {
+        let addr = IPv4Addr::from("192.168.11.24");
+        assert_eq!(IPv4Addr::from([192, 168, 11, 24]), addr);
     }
 
     #[test]

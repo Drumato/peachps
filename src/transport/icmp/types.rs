@@ -2,14 +2,14 @@ use std::io::Cursor;
 
 use crate::{byteorder_wrapper, transport::TransportHeader};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MessageHeader {
     pub ty: MessageType,
     pub code: u8,
     pub checksum: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessageType {
     /// エコー応答
     EchoReply,
@@ -40,6 +40,17 @@ impl MessageHeader {
         message_header.checksum = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
 
         Ok(message_header)
+    }
+
+    pub fn to_bytes<E>(&self, err: E) -> Result<Vec<u8>, E>
+    where
+        E: std::error::Error + Copy,
+    {
+        let mut buf = Vec::<u8>::new();
+        byteorder_wrapper::write_u8(&mut buf, self.ty.into(), err)?;
+        byteorder_wrapper::write_u8(&mut buf, self.code, err)?;
+        byteorder_wrapper::write_u16_as_be(&mut buf, self.checksum, err)?;
+        Ok(buf)
     }
 }
 

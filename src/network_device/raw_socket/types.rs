@@ -43,7 +43,7 @@ impl network_device::NetworkDevice for Socket {
     fn write(&mut self, buf: &[u8]) -> Result<usize, NetworkDeviceError> {
         let result =
             unsafe { libc::write(self.fd, buf.as_ptr() as *const libc::c_void, buf.len()) };
-        if result == -1 {
+        if result == -1 || result != buf.len() as isize {
             return Err(NetworkDeviceError::FailedToWriteTo { fd: self.fd });
         }
 

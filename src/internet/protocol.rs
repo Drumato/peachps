@@ -1,6 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::{internet, link::LinkProtocolError, network_device, option, RxResult};
+use crate::{
+    internet,
+    link::{self, LinkProtocolError},
+    network_device, option, RxResult,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InternetProtocol {
@@ -36,6 +40,7 @@ pub fn rx<ND: network_device::NetworkDevice>(
     expected: &HashSet<InternetProtocol>,
     rx_result: RxResult,
     buf: &[u8],
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
     if !expected.contains(&rx_result.ip_type) {
         return Err(InternetProtocolError::Ignore);
@@ -43,7 +48,7 @@ pub fn rx<ND: network_device::NetworkDevice>(
 
     match rx_result.ip_type {
         InternetProtocol::IP => internet::ip::rx(opt, rx_result, buf),
-        InternetProtocol::ARP => internet::arp::rx(opt, dev, rx_result, buf),
+        InternetProtocol::ARP => internet::arp::rx(opt, dev, rx_result, buf, arp_cache),
         _ => unimplemented!(),
     }
 }

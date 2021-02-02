@@ -1,6 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::{internet::InternetProtocolError, network_device, option, RxResult};
+use crate::{
+    internet::{self, InternetProtocolError},
+    link, network_device, option, RxResult,
+};
 
 use super::icmp;
 
@@ -22,6 +25,8 @@ pub enum TransportProtocolError {
     Ignore,
     #[error("cannot construct ICMP message")]
     CannotConstructICMPMessage,
+    #[error("invalid checksum")]
+    InvalidChecksum,
     #[error("{e:}")]
     IPError { e: InternetProtocolError },
 }
@@ -32,13 +37,14 @@ pub fn rx<ND: network_device::NetworkDevice>(
     expects: &HashSet<TransportProtocol>,
     ip_result: RxResult,
     buf: &[u8],
+    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<Vec<u8>, TransportProtocolError> {
     if !expects.contains(&ip_result.tp_type) {
         return Err(TransportProtocolError::Ignore);
     }
     match ip_result.tp_type {
         TransportProtocol::ICMP => {
-            let (_message_header, rest) = icmp::rx(opt, dev, ip_result, buf)?;
+            let (_message_header, rest) = icmp::rx(opt, dev, ip_result, buf, arp_cache)?;
             Ok(rest)
         }
         _ => unimplemented!(),

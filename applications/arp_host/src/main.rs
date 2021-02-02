@@ -17,13 +17,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let tcp_layer = Default::default();
 
-    let opt: option::PeachPSOption = {
-        let mut o: option::PeachPSOption = Default::default();
-        o.ip_addr = internet::ip::IPv4Addr::from([192, 168, 111, 240]);
-        o.network_mask = internet::ip::IPv4Addr::from([255, 255, 255, 0]);
-        o.debug = args.len() == 3 && args[2] == "debug";
-        o
-    };
+    let opt: option::PeachPSOption = option::PeachPSOption::from_yaml("config.yaml");
 
     peachps::run(
         opt,

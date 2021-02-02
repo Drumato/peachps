@@ -15,6 +15,7 @@ pub struct ARPHeader {
     pub dst_link_addr: MacAddress,
     pub dst_internet_addr: IPv4Addr,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Operation {
     Reply,
@@ -56,6 +57,8 @@ impl Default for ARPHeader {
 }
 
 impl ARPHeader {
+    pub const LENGTH: usize = 28;
+
     pub fn new_from_bytes<E: std::error::Error + Copy>(buf: &[u8], err: E) -> Result<Self, E> {
         let mut reader = Cursor::new(buf);
         let mut packet_hdr: Self = Default::default();
