@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::network_device;
 use crate::{internet, link, option, transport};
@@ -34,9 +37,9 @@ pub struct RxResult {
     pub tp_type: transport::TransportProtocol,
 }
 
-fn rx_datalink<ND>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+fn rx_datalink<'a, ND>(
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     lp: link::LinkProtocol,
 ) -> Result<(RxResult, Vec<u8>), PeachPSError>
 where
@@ -44,7 +47,7 @@ where
 {
     let mut buf: [u8; 2048] = [0; 2048];
 
-    let nbytes = dev.read(&mut buf)?;
+    let nbytes = dev.lock().unwrap().read(&mut buf)?;
 
     if nbytes == 0 {
         return Err(PeachPSError::EOF);
@@ -56,62 +59,65 @@ where
 }
 
 fn rx_internet<ND>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     lp: link::LinkProtocol,
-    ips: &HashSet<internet::InternetProtocol>,
-    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
+    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(RxResult, Vec<u8>), PeachPSError>
 where
-    ND: network_device::NetworkDevice,
+    ND: 'static + network_device::NetworkDevice,
 {
-    let (link_ex_result, raw_ip_packet) = rx_datalink(opt, dev, lp)?;
-    let (result, rest) = internet::rx(opt, dev, ips, link_ex_result, &raw_ip_packet, arp_cache)?;
+    let (link_ex_result, raw_ip_packet) = rx_datalink(Arc::clone(&opt), Arc::clone(&dev), lp)?;
+    let (result, rest) = internet::rx(opt, dev, link_ex_result, &raw_ip_packet, arp_cache)?;
 
     Ok((result, rest))
 }
 
-fn rx_transport<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+fn rx_transport<ND: 'static + network_device::NetworkDevice>(
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     lp: link::LinkProtocol,
-    ips: &HashSet<internet::InternetProtocol>,
-    tps: &HashSet<transport::TransportProtocol>,
-    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
+    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<Vec<u8>, PeachPSError> {
-    let (result, raw_segment) = rx_internet(opt, dev, lp, ips, arp_cache)?;
+    let (result, raw_segment) = rx_internet(
+        Arc::clone(&opt),
+        Arc::clone(&dev),
+        lp,
+        Arc::clone(&arp_cache),
+    )?;
 
-    let data = transport::rx(opt, dev, tps, result, &raw_segment, arp_cache)?;
+    let data = transport::rx(opt, dev, result, &raw_segment, arp_cache)?;
 
     Ok(data)
 }
 
-pub async fn run<ND: network_device::NetworkDevice>(
+pub fn run<ND: 'static + network_device::NetworkDevice>(
     opt: option::PeachPSOption,
-    dev: &mut ND,
+    dev: ND,
     lp: link::LinkProtocol,
-    ips: &HashSet<internet::InternetProtocol>,
-    tps: &HashSet<transport::TransportProtocol>,
 ) -> Result<(), PeachPSError> {
-    if opt.debug {
-        eprintln!("IP Address: {}", opt.ip_addr);
-        eprintln!("Network Mask: {}", opt.network_mask);
-    }
+    let dev = Arc::new(Mutex::new(dev));
+    let opt = Arc::new(opt);
+    let arp_cache = Arc::new(Mutex::new(HashMap::with_capacity(16)));
 
-    let mut arp_cache: HashMap<internet::ip::IPv4Addr, link::MacAddress> =
-        HashMap::with_capacity(16);
-
-    loop {
-        match rx_transport(opt, dev, lp, ips, tps, &mut arp_cache) {
+    let rx_thread = std::thread::spawn(move || loop {
+        let dev = Arc::clone(&dev);
+        let opt = Arc::clone(&opt);
+        let arp_cache = Arc::clone(&arp_cache);
+        match rx_transport(opt, dev, lp, arp_cache) {
             Ok(_data) => {}
             Err(e) => match e {
                 PeachPSError::Ignore => {
                     continue;
                 }
-                _ => return Err(e),
+                _ => break,
             },
         }
-    }
+    });
+
+    rx_thread.join().unwrap();
+
+    Ok(())
 }
 
 impl From<network_device::NetworkDeviceError> for PeachPSError {

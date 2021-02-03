@@ -1,10 +1,7 @@
-use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use super::FrameHeader;
-use crate::{
-    internet::{self, InternetProtocol},
-    link::{self, MacAddress},
-};
+use crate::{internet::InternetProtocol, link::MacAddress};
 use crate::{link::LinkProtocolError, network_device, option};
 pub fn rx(buf: &[u8]) -> Result<(FrameHeader, Vec<u8>), LinkProtocolError> {
     let frame_hdr = FrameHeader::new_from_bytes(buf, LinkProtocolError::CannotParseFrameHeader)?;
@@ -13,12 +10,11 @@ pub fn rx(buf: &[u8]) -> Result<(FrameHeader, Vec<u8>), LinkProtocolError> {
 }
 
 pub fn tx<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     ip_type: InternetProtocol,
     dst_addr: MacAddress,
     mut payload: Vec<u8>,
-    _arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(), LinkProtocolError> {
     let mut ethernet_frame = Vec::<u8>::new();
     let frame_hdr = FrameHeader {
@@ -34,7 +30,7 @@ pub fn tx<ND: network_device::NetworkDevice>(
         eprintln!("{}", frame_hdr);
     }
 
-    dev.write(&ethernet_frame)?;
+    dev.lock().unwrap().write(&ethernet_frame)?;
 
     Ok(())
 }

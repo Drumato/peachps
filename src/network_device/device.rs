@@ -1,7 +1,7 @@
 use crate::link::MacAddress;
 use thiserror::Error;
 
-pub trait NetworkDevice: Copy {
+pub trait NetworkDevice: Copy + Send {
     /// デバイスからデータを読み込む
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkDeviceError>;
     fn write(&mut self, buf: &[u8]) -> Result<usize, NetworkDeviceError>;

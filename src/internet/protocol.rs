@@ -1,4 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
+use internet::ip::IPv4Addr;
 
 use crate::{
     internet,
@@ -32,17 +37,18 @@ pub enum InternetProtocolError {
     LinkError { e: LinkProtocolError },
     #[error("unsupported header option")]
     UnsupportedHeaderOption,
+    #[error("cannot resolve MAC address from {unknown_ip}")]
+    CannotResolveMACAddressFrom { unknown_ip: IPv4Addr },
 }
 
-pub fn rx<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
-    expected: &HashSet<InternetProtocol>,
+pub fn rx<ND: 'static + network_device::NetworkDevice>(
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     rx_result: RxResult,
     buf: &[u8],
-    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
+    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
-    if !expected.contains(&rx_result.ip_type) {
+    if !opt.internet_filter.contains(&rx_result.ip_type) {
         return Err(InternetProtocolError::Ignore);
     }
 
@@ -61,6 +67,16 @@ impl std::fmt::Display for InternetProtocol {
             InternetProtocol::IPv6 => "IPv6",
         };
         write!(f, "{}", type_str)
+    }
+}
+impl From<&str> for InternetProtocol {
+    fn from(s: &str) -> Self {
+        match s {
+            "IP" => InternetProtocol::IP,
+            "ARP" => InternetProtocol::ARP,
+            "IPv6" => InternetProtocol::IPv6,
+            _ => panic!("unsupported protocol => '{}'", s),
+        }
     }
 }
 

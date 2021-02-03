@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use super::{Message, MessageType};
 use crate::{
@@ -9,44 +12,44 @@ use crate::{
     RxResult,
 };
 
-pub fn rx<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+pub fn rx<ND: 'static + network_device::NetworkDevice>(
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     rx_result: RxResult,
     buf: &[u8],
-    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
+    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(Message, Vec<u8>), TransportProtocolError> {
     let header = Message::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
-
-    if opt.debug {
-        eprintln!("++++++++ ICMP Message ++++++++");
-        eprintln!("{}", header);
-    }
 
     let (_, rest) = buf.split_at(Message::LENGTH);
 
     if header.ty == MessageType::EchoRequest {
         // srcとdstの関係が逆になるので注意
-        tx(
-            opt,
-            dev,
-            MessageType::EchoReply,
-            header,
-            rx_result,
-            arp_cache,
-        )?;
+        std::thread::spawn(move || {
+            tx(
+                opt,
+                dev,
+                MessageType::EchoReply,
+                header,
+                rx_result,
+                arp_cache,
+            )
+            .unwrap();
+        })
+        .join()
+        .unwrap();
     }
 
     Ok((header, rest.to_vec()))
 }
 
-pub fn tx<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+pub fn tx<ND: 'static + network_device::NetworkDevice>(
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     msg_type: MessageType,
     received_msg: Message,
     rx_result: RxResult,
-    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
+    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(), TransportProtocolError> {
     let mut icmp_message: Message = Default::default();
     icmp_message.ty = msg_type;

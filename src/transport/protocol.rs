@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     internet::{self, InternetProtocolError},
@@ -31,21 +34,26 @@ pub enum TransportProtocolError {
     IPError { e: InternetProtocolError },
 }
 
-pub fn rx<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
-    expects: &HashSet<TransportProtocol>,
+pub fn rx<ND: 'static + network_device::NetworkDevice>(
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     ip_result: RxResult,
     buf: &[u8],
-    arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
+    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<Vec<u8>, TransportProtocolError> {
-    if !expects.contains(&ip_result.tp_type) {
+    if !opt.transport_filter.contains(&ip_result.tp_type) {
         return Err(TransportProtocolError::Ignore);
     }
+
     match ip_result.tp_type {
         TransportProtocol::ICMP => {
             let (_message_header, rest) = icmp::rx(opt, dev, ip_result, buf, arp_cache)?;
             Ok(rest)
+        }
+        TransportProtocol::TCP => {
+            // let (_segment_header, rest) = tcp::rx(opt, dev, ip_result, buf, arp_cache)?;
+            // Ok(rest)
+            unimplemented!()
         }
         _ => unimplemented!(),
     }
@@ -60,6 +68,16 @@ impl std::fmt::Display for TransportProtocol {
             TransportProtocol::UnAssigned => "UnAssigned",
         };
         write!(f, "{}", type_str)
+    }
+}
+impl From<&str> for TransportProtocol {
+    fn from(s: &str) -> Self {
+        match s {
+            "ICMP" => TransportProtocol::ICMP,
+            "TCP" => TransportProtocol::TCP,
+            "UDP" => TransportProtocol::UDP,
+            _ => panic!("unsupported protocol => '{}'", s),
+        }
     }
 }
 

@@ -1,35 +1,45 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     internet::{ip, InternetProtocol, InternetProtocolError},
-    link::{self, ethernet, LinkProtocol, MacAddress},
+    link::{self, ethernet, LinkProtocol},
     network_device, option, RxResult,
 };
 
 use super::{ARPHeader, Operation};
 
-pub fn rx<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+pub fn rx<ND: 'static + network_device::NetworkDevice>(
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     mut rx_result: RxResult,
     buf: &[u8],
-    arp_cache: &mut HashMap<ip::IPv4Addr, MacAddress>,
+    arp_cache: Arc<Mutex<HashMap<ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
     let arp_packet_hdr =
         ARPHeader::new_from_bytes(buf, InternetProtocolError::CannotParsePacketHeader)?;
     let (_, rest) = buf.split_at(ARPHeader::LENGTH);
 
-    if opt.debug {
-        eprintln!("++++++++ ARP Packet ++++++++");
-        eprintln!("{}", arp_packet_hdr);
-    }
-
     if arp_packet_hdr.operation == Operation::Request {
-        arp_cache.insert(
+        // ARPテーブルのロックをとって書き込む
+        arp_cache.lock().unwrap().insert(
             arp_packet_hdr.src_internet_addr,
             arp_packet_hdr.src_link_addr,
         );
-        tx_reply(opt, dev, &arp_packet_hdr, arp_cache)?;
+        if opt.debug {
+            eprintln!(
+                "inserting an ARP table entry `{} => {}`",
+                arp_packet_hdr.src_internet_addr, arp_packet_hdr.src_link_addr
+            );
+        }
+
+        std::thread::spawn(move || {
+            tx_reply(opt, dev, &arp_packet_hdr).unwrap();
+        })
+        .join()
+        .unwrap();
     }
 
     rx_result.src_ip_addr = arp_packet_hdr.src_internet_addr;
@@ -38,10 +48,9 @@ pub fn rx<ND: network_device::NetworkDevice>(
 }
 
 pub fn tx_request<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     target_ip: ip::IPv4Addr,
-    arp_cache: &mut HashMap<ip::IPv4Addr, MacAddress>,
 ) -> Result<(), InternetProtocolError> {
     let mut send_arp_packet: ARPHeader = Default::default();
     send_arp_packet.operation = Operation::Request;
@@ -53,33 +62,35 @@ pub fn tx_request<ND: network_device::NetworkDevice>(
     send_arp_packet.internet_addr_length = 6;
     send_arp_packet.link_addr_length = 4;
 
+    if opt.debug {
+        eprintln!("++++++++ tx arp packet ++++++++");
+        eprintln!("{}", send_arp_packet);
+    }
+
     ethernet::tx(
         opt,
         dev,
         InternetProtocol::ARP,
         link::BLOADCAST_MAC_ADDRESS,
         send_arp_packet.to_bytes(InternetProtocolError::CannotConstructPacket)?,
-        arp_cache,
     )?;
 
     Ok(())
 }
 
 fn tx_reply<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     receive_arp_packet: &ARPHeader,
-    arp_cache: &mut HashMap<ip::IPv4Addr, MacAddress>,
 ) -> Result<(), InternetProtocolError> {
-    tx(opt, dev, Operation::Reply, receive_arp_packet, arp_cache)
+    tx(opt, dev, Operation::Reply, receive_arp_packet)
 }
 
 fn tx<ND: network_device::NetworkDevice>(
-    opt: option::PeachPSOption,
-    dev: &mut ND,
+    opt: Arc<option::PeachPSOption>,
+    dev: Arc<Mutex<ND>>,
     op: Operation,
     receive_arp_packet: &ARPHeader,
-    arp_cache: &mut HashMap<ip::IPv4Addr, MacAddress>,
 ) -> Result<(), InternetProtocolError> {
     let mut send_arp_packet: ARPHeader = Default::default();
     // 殆どの部分は，受信したパケットの値をコピーするだけで良い
@@ -97,13 +108,17 @@ fn tx<ND: network_device::NetworkDevice>(
     send_arp_packet.src_link_addr = opt.dev_addr;
     send_arp_packet.src_internet_addr = opt.ip_addr;
 
+    if opt.debug {
+        eprintln!("++++++++ tx arp packet ++++++++");
+        eprintln!("{}", send_arp_packet);
+    }
+
     ethernet::tx(
         opt,
         dev,
         InternetProtocol::ARP,
         send_arp_packet.dst_link_addr,
         send_arp_packet.to_bytes(InternetProtocolError::CannotConstructPacket)?,
-        arp_cache,
     )?;
 
     Ok(())
