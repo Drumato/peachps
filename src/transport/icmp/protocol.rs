@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{MessageHeader, MessageType};
+use super::{Message, MessageType};
 use crate::{
     checksum,
     internet::{self},
@@ -15,16 +15,15 @@ pub fn rx<ND: network_device::NetworkDevice>(
     rx_result: RxResult,
     buf: &[u8],
     arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
-) -> Result<(MessageHeader, Vec<u8>), TransportProtocolError> {
-    let header =
-        MessageHeader::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
+) -> Result<(Message, Vec<u8>), TransportProtocolError> {
+    let header = Message::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
 
     if opt.debug {
         eprintln!("++++++++ ICMP Message ++++++++");
         eprintln!("{}", header);
     }
 
-    let (_, rest) = buf.split_at(MessageHeader::LENGTH);
+    let (_, rest) = buf.split_at(Message::LENGTH);
 
     if header.ty == MessageType::EchoRequest {
         // srcとdstの関係が逆になるので注意
@@ -32,7 +31,7 @@ pub fn rx<ND: network_device::NetworkDevice>(
             opt,
             dev,
             MessageType::EchoReply,
-            header.code,
+            header,
             rx_result,
             arp_cache,
         )?;
@@ -45,15 +44,15 @@ pub fn tx<ND: network_device::NetworkDevice>(
     opt: option::PeachPSOption,
     dev: &mut ND,
     msg_type: MessageType,
-    code: u8,
+    received_msg: Message,
     rx_result: RxResult,
     arp_cache: &mut HashMap<internet::ip::IPv4Addr, link::MacAddress>,
 ) -> Result<(), TransportProtocolError> {
-    let mut icmp_message = MessageHeader {
-        ty: msg_type,
-        code,
-        checksum: 0x00,
-    };
+    let mut icmp_message: Message = Default::default();
+    icmp_message.ty = msg_type;
+    icmp_message.code = received_msg.code;
+    icmp_message.data = received_msg.data;
+
     let before_buf = icmp_message.to_bytes(TransportProtocolError::CannotConstructICMPMessage)?;
     let cksum = checksum::calculate_checksum_u16(
         &before_buf,

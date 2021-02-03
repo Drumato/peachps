@@ -3,10 +3,20 @@ use std::io::Cursor;
 use crate::{byteorder_wrapper, transport::TransportHeader};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MessageHeader {
+pub struct Message {
     pub ty: MessageType,
     pub code: u8,
     pub checksum: u16,
+    pub data: MessageData,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MessageData {
+    Echo {
+        identifier: u16,
+        sequence_number: u16,
+    },
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -23,7 +33,7 @@ pub enum MessageType {
     TimeExceeded,
 }
 
-impl MessageHeader {
+impl Message {
     pub const LENGTH: usize = 4;
 
     pub fn new_from_bytes<E>(buf: &[u8], err: E) -> Result<Self, E>
@@ -31,13 +41,25 @@ impl MessageHeader {
         E: std::error::Error + Copy,
     {
         let mut reader = Cursor::new(buf);
-        let mut message_header: MessageHeader = Default::default();
+        let mut message_header: Message = Default::default();
 
         let message_type = byteorder_wrapper::read_u8(&mut reader, err)?;
 
         message_header.ty = MessageType::from(message_type);
         message_header.code = byteorder_wrapper::read_u8(&mut reader, err)?;
         message_header.checksum = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+
+        match message_header.ty {
+            MessageType::EchoRequest | MessageType::EchoReply => {
+                let id = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+                let seq = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
+                message_header.data = MessageData::Echo {
+                    identifier: id,
+                    sequence_number: seq,
+                };
+            }
+            _ => {}
+        }
 
         Ok(message_header)
     }
@@ -50,27 +72,48 @@ impl MessageHeader {
         byteorder_wrapper::write_u8(&mut buf, self.ty.into(), err)?;
         byteorder_wrapper::write_u8(&mut buf, self.code, err)?;
         byteorder_wrapper::write_u16_as_be(&mut buf, self.checksum, err)?;
+        match self.data {
+            MessageData::Echo {
+                identifier,
+                sequence_number,
+            } => {
+                byteorder_wrapper::write_u16_as_be(&mut buf, identifier, err)?;
+                byteorder_wrapper::write_u16_as_be(&mut buf, sequence_number, err)?;
+            }
+            MessageData::None => {}
+        }
         Ok(buf)
     }
 }
 
-impl TransportHeader for MessageHeader {}
+impl TransportHeader for Message {}
 
-impl Default for MessageHeader {
+impl Default for Message {
     fn default() -> Self {
         Self {
             ty: MessageType::EchoReply,
             code: 0,
             checksum: 0,
+            data: MessageData::None,
         }
     }
 }
 
-impl std::fmt::Display for MessageHeader {
+impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Type: {}", self.ty)?;
         writeln!(f, "Code: {}", self.code)?;
-        writeln!(f, "Checksum: {}", self.checksum)
+        writeln!(f, "Checksum: {}", self.checksum)?;
+        match self.data {
+            MessageData::Echo {
+                identifier,
+                sequence_number,
+            } => {
+                writeln!(f, "Identifier: {}", identifier)?;
+                writeln!(f, "Sequence: {}", sequence_number)
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -121,15 +164,20 @@ mod tests {
 
     #[test]
     fn parse_icmp_message_test() {
-        let raw_message = [0x00, 0x00, 0x55, 0x49];
-        let result = MessageHeader::new_from_bytes(
-            &raw_message,
-            TransportProtocolError::CannotParseICMPMessage,
-        );
+        let raw_message = [0x00, 0x00, 0x55, 0x49, 0x00, 0x01, 0x00, 0x05];
+        let result =
+            Message::new_from_bytes(&raw_message, TransportProtocolError::CannotParseICMPMessage);
         assert!(result.is_ok());
-        let message_hdr = result.unwrap();
-        assert_eq!(MessageType::EchoReply, message_hdr.ty);
-        assert_eq!(0, message_hdr.code);
-        assert_eq!(0x5549, message_hdr.checksum);
+        let msg = result.unwrap();
+        assert_eq!(MessageType::EchoReply, msg.ty);
+        assert_eq!(0, msg.code);
+        assert_eq!(0x5549, msg.checksum);
+        assert_eq!(
+            MessageData::Echo {
+                identifier: 1,
+                sequence_number: 5,
+            },
+            msg.data
+        );
     }
 }
