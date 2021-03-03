@@ -110,7 +110,10 @@ pub fn run<ND: 'static + network_device::NetworkDevice>(
                 PeachPSError::Ignore => {
                     continue;
                 }
-                _ => break,
+                _ => {
+                    eprintln!("Error Found: {}", e);
+                    std::process::exit(1);
+                }
             },
         }
     });

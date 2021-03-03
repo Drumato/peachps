@@ -5,7 +5,7 @@ use std::{
 
 use super::{Message, MessageType};
 use crate::{
-    checksum,
+    checksum::calculate_checksum_u16,
     internet::{self},
     link, network_device, option,
     transport::{TransportProtocol, TransportProtocolError},
@@ -19,12 +19,23 @@ pub fn rx<ND: 'static + network_device::NetworkDevice>(
     buf: &[u8],
     arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(Message, Vec<u8>), TransportProtocolError> {
-    let header = Message::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
+    let mut header = Message::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
+    header.checksum = 0;
+    let header_buf = header.to_bytes(TransportProtocolError::CannotParseICMPMessage)?;
+    let _cksum = calculate_checksum_u16(
+        &header_buf,
+        header_buf.len() as u16,
+        TransportProtocolError::InvalidChecksum,
+    )?;
+
+    if opt.debug {
+        eprintln!("++++++++ rx icmp message ++++++++");
+        eprintln!("{}", header);
+    }
 
     let (_, rest) = buf.split_at(Message::LENGTH);
 
     if header.ty == MessageType::EchoRequest {
-        // srcとdstの関係が逆になるので注意
         std::thread::spawn(move || {
             tx(
                 opt,
@@ -57,7 +68,7 @@ pub fn tx<ND: 'static + network_device::NetworkDevice>(
     icmp_message.data = received_msg.data;
 
     let before_buf = icmp_message.to_bytes(TransportProtocolError::CannotConstructICMPMessage)?;
-    let cksum = checksum::calculate_checksum_u16(
+    let cksum = calculate_checksum_u16(
         &before_buf,
         before_buf.len() as u16,
         TransportProtocolError::InvalidChecksum,

@@ -25,11 +25,6 @@ pub fn tx<ND: network_device::NetworkDevice>(
     ethernet_frame.append(&mut frame_hdr.to_bytes(LinkProtocolError::CannotConstructFrame)?);
     ethernet_frame.append(&mut payload);
 
-    if opt.debug {
-        eprintln!("++++++++ tx ethernet frame ++++++++");
-        eprintln!("{}", frame_hdr);
-    }
-
     dev.lock().unwrap().write(&ethernet_frame)?;
 
     Ok(())

@@ -103,11 +103,6 @@ fn tx_core<ND: network_device::NetworkDevice>(
         InternetProtocolError::CannotConstructPacket,
     )?;
 
-    if opt.debug {
-        eprintln!("++++++++ tx ip packet ++++++++");
-        eprintln!("{}", packet_hdr);
-    }
-
     ip_packet.append(&mut packet_hdr.to_bytes(InternetProtocolError::CannotConstructPacket)?);
     ip_packet.append(&mut tp_payload);
 

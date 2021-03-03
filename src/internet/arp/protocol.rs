@@ -20,6 +20,11 @@ pub fn rx<ND: 'static + network_device::NetworkDevice>(
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
     let arp_packet_hdr =
         ARPHeader::new_from_bytes(buf, InternetProtocolError::CannotParsePacketHeader)?;
+    if opt.debug {
+        eprintln!("++++++++ tx arp packet ++++++++");
+        eprintln!("{}", arp_packet_hdr);
+    }
+
     let (_, rest) = buf.split_at(ARPHeader::LENGTH);
 
     if arp_packet_hdr.operation == Operation::Request {
@@ -62,11 +67,6 @@ pub fn tx_request<ND: network_device::NetworkDevice>(
     send_arp_packet.internet_addr_length = 6;
     send_arp_packet.link_addr_length = 4;
 
-    if opt.debug {
-        eprintln!("++++++++ tx arp packet ++++++++");
-        eprintln!("{}", send_arp_packet);
-    }
-
     ethernet::tx(
         opt,
         dev,
@@ -107,11 +107,6 @@ fn tx<ND: network_device::NetworkDevice>(
     // 自身のアドレスを書き込んで教える
     send_arp_packet.src_link_addr = opt.dev_addr;
     send_arp_packet.src_internet_addr = opt.ip_addr;
-
-    if opt.debug {
-        eprintln!("++++++++ tx arp packet ++++++++");
-        eprintln!("{}", send_arp_packet);
-    }
 
     ethernet::tx(
         opt,

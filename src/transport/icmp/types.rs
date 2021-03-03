@@ -15,6 +15,7 @@ pub enum MessageData {
     Echo {
         identifier: u16,
         sequence_number: u16,
+        raw_data: [u8; 32],
     },
     None,
 }
@@ -49,17 +50,29 @@ impl Message {
         message_header.code = byteorder_wrapper::read_u8(&mut reader, err)?;
         message_header.checksum = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
 
-        match message_header.ty {
+        message_header.data = match message_header.ty {
             MessageType::EchoRequest | MessageType::EchoReply => {
                 let id = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
                 let seq = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
-                message_header.data = MessageData::Echo {
+                let mut raw_data = [0; 32];
+                let mut idx = 0;
+                while let Ok(byte) = byteorder_wrapper::read_u8(&mut reader, err) {
+                    if idx == 32 {
+                        break;
+                    }
+
+                    raw_data[idx] = byte;
+                    idx += 1;
+                }
+
+                MessageData::Echo {
                     identifier: id,
                     sequence_number: seq,
-                };
+                    raw_data,
+                }
             }
-            _ => {}
-        }
+            _ => unimplemented!(),
+        };
 
         Ok(message_header)
     }
@@ -76,9 +89,13 @@ impl Message {
             MessageData::Echo {
                 identifier,
                 sequence_number,
+                raw_data,
             } => {
                 byteorder_wrapper::write_u16_as_be(&mut buf, identifier, err)?;
                 byteorder_wrapper::write_u16_as_be(&mut buf, sequence_number, err)?;
+                for byte in raw_data.iter() {
+                    byteorder_wrapper::write_u8(&mut buf, *byte, err)?;
+                }
             }
             MessageData::None => {}
         }
@@ -108,9 +125,11 @@ impl std::fmt::Display for Message {
             MessageData::Echo {
                 identifier,
                 sequence_number,
+                raw_data,
             } => {
                 writeln!(f, "Identifier: {}", identifier)?;
-                writeln!(f, "Sequence: {}", sequence_number)
+                writeln!(f, "Sequence: {}", sequence_number)?;
+                writeln!(f, "Data: {:?}", raw_data)
             }
             _ => Ok(()),
         }

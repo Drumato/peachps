@@ -37,7 +37,7 @@ pub enum InternetProtocolError {
     LinkError { e: LinkProtocolError },
     #[error("unsupported header option")]
     UnsupportedHeaderOption,
-    #[error("cannot resolve MAC address from {unknown_ip}")]
+    #[error("cannot resolve MAC address from {unknown_ip:?}")]
     CannotResolveMACAddressFrom { unknown_ip: IPv4Addr },
 }
 
