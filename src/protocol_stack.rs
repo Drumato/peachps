@@ -91,11 +91,14 @@ fn rx_transport<ND: 'static + network_device::NetworkDevice>(
     Ok(data)
 }
 
-pub fn run<ND: 'static + network_device::NetworkDevice>(
+pub fn run<T, ND>(
     opt: option::PeachPSOption,
     dev: ND,
     lp: link::LinkProtocol,
-) -> Result<(), PeachPSError> {
+) -> Result<(), PeachPSError>
+where
+    ND: 'static + network_device::NetworkDevice,
+{
     let dev = Arc::new(Mutex::new(dev));
     let opt = Arc::new(opt);
     let arp_cache = Arc::new(Mutex::new(HashMap::with_capacity(16)));

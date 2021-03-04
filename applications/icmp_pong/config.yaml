@@ -1,7 +1,7 @@
-device_addr: "08:00:27:d0:22:0d"
-ip_addr: "192.168.33.13"
+device_addr: "08:00:27:3c:a9:81"
+ip_addr: "192.168.11.30"
 network_mask: "255.255.255.0"
-debug: true
+debug: false
 internet:
   - IP
   - ARP

@@ -7,13 +7,7 @@ Vagrant.configure("2") do |config|
 
     config.vm.define :node1 do |node|
         node.vm.box = "bento/ubuntu-20.04"
-        node.vm.network :private_network, ip:"192.168.33.11"
         node.vm.hostname = "node1"
-    end
-    
-    config.vm.define :node2 do |node|
-        node.vm.box = "bento/ubuntu-20.04"
-        node.vm.network :private_network, ip:"192.168.33.12"
-        node.vm.hostname = "node2"
+        node.vm.network "public_network"
     end
 end
