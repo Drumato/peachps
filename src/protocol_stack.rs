@@ -3,10 +3,25 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::network_device;
-use crate::{internet, link, option, transport};
+use crate::{
+    internet,
+    link::{self, MacAddress},
+    option, transport,
+};
+use crate::{
+    internet::ip::IPv4Addr,
+    network_device::{self, NetworkDevice},
+};
 
 use thiserror::Error;
+
+#[derive(Debug, Clone)]
+pub struct Items<ND: network_device::NetworkDevice> {
+    pub opt: option::PeachPSOption,
+    pub dev: Arc<Mutex<ND>>,
+    pub arp_table: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
+    pub tcp_connection: Arc<Mutex<Vec<transport::tcp::ProtocolControlBlock>>>,
+}
 
 #[derive(Error, Debug)]
 pub enum PeachPSError {
@@ -37,9 +52,8 @@ pub struct RxResult {
     pub tp_type: transport::TransportProtocol,
 }
 
-fn rx_datalink<'a, ND>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+async fn rx_datalink<'a, ND>(
+    table: &'a Items<ND>,
     lp: link::LinkProtocol,
 ) -> Result<(RxResult, Vec<u8>), PeachPSError>
 where
@@ -47,67 +61,47 @@ where
 {
     let mut buf: [u8; 2048] = [0; 2048];
 
-    let nbytes = dev.lock().unwrap().read(&mut buf)?;
+    let nbytes = table.dev.lock().unwrap().read(&mut buf).await?;
 
     if nbytes == 0 {
         return Err(PeachPSError::EOF);
     }
 
-    let (result, rest) = link::rx(opt, lp, &buf)?;
+    let (result, rest) = link::rx(table, lp, &buf).await?;
 
     Ok((result, rest))
 }
 
-fn rx_internet<ND>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+async fn rx_internet<'a, ND>(
+    table: &'a Items<ND>,
     lp: link::LinkProtocol,
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(RxResult, Vec<u8>), PeachPSError>
 where
-    ND: 'static + network_device::NetworkDevice,
+    ND: network_device::NetworkDevice,
 {
-    let (link_ex_result, raw_ip_packet) = rx_datalink(Arc::clone(&opt), Arc::clone(&dev), lp)?;
-    let (result, rest) = internet::rx(opt, dev, link_ex_result, &raw_ip_packet, arp_cache)?;
+    let (link_ex_result, raw_ip_packet) = rx_datalink(table, lp).await?;
+    let (result, rest) = internet::rx(table, link_ex_result, &raw_ip_packet).await?;
 
     Ok((result, rest))
 }
 
-fn rx_transport<ND: 'static + network_device::NetworkDevice>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+async fn rx_transport<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     lp: link::LinkProtocol,
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<Vec<u8>, PeachPSError> {
-    let (result, raw_segment) = rx_internet(
-        Arc::clone(&opt),
-        Arc::clone(&dev),
-        lp,
-        Arc::clone(&arp_cache),
-    )?;
+    let (result, raw_segment) = rx_internet(table, lp).await?;
 
-    let data = transport::rx(opt, dev, result, &raw_segment, arp_cache)?;
+    let data = transport::rx(table, result, &raw_segment).await?;
 
     Ok(data)
 }
 
-pub fn run<T, ND>(
-    opt: option::PeachPSOption,
-    dev: ND,
-    lp: link::LinkProtocol,
-) -> Result<(), PeachPSError>
+pub async fn run<'a, ND>(table: &'a Items<ND>, lp: link::LinkProtocol) -> Result<(), PeachPSError>
 where
-    ND: 'static + network_device::NetworkDevice,
+    ND: network_device::NetworkDevice,
 {
-    let dev = Arc::new(Mutex::new(dev));
-    let opt = Arc::new(opt);
-    let arp_cache = Arc::new(Mutex::new(HashMap::with_capacity(16)));
-
-    let rx_thread = std::thread::spawn(move || loop {
-        let dev = Arc::clone(&dev);
-        let opt = Arc::clone(&opt);
-        let arp_cache = Arc::clone(&arp_cache);
-        match rx_transport(opt, dev, lp, arp_cache) {
+    loop {
+        match rx_transport(&table, lp).await {
             Ok(_data) => {}
             Err(e) => match e {
                 PeachPSError::Ignore => {
@@ -119,11 +113,7 @@ where
                 }
             },
         }
-    });
-
-    rx_thread.join().unwrap();
-
-    Ok(())
+    }
 }
 
 impl From<network_device::NetworkDeviceError> for PeachPSError {
@@ -149,6 +139,7 @@ impl From<internet::InternetProtocolError> for PeachPSError {
         }
     }
 }
+
 impl From<link::LinkProtocolError> for PeachPSError {
     fn from(e: link::LinkProtocolError) -> Self {
         match e {
@@ -166,5 +157,26 @@ impl Default for RxResult {
             ip_type: Default::default(),
             tp_type: Default::default(),
         }
+    }
+}
+
+impl<ND: NetworkDevice> Items<ND> {
+    pub fn new(opt: option::PeachPSOption, dev: ND) -> Self {
+        Self {
+            opt,
+            dev: Arc::new(Mutex::new(dev)),
+            arp_table: Arc::new(Mutex::new(HashMap::with_capacity(16))),
+            tcp_connection: Arc::new(Mutex::new(Vec::with_capacity(16))),
+        }
+    }
+
+    pub fn lookup_arp_table(&self, ip: &IPv4Addr) -> Option<MacAddress> {
+        if let Ok(arp_table) = self.arp_table.lock() {
+            if let Some(mac_addr) = arp_table.get(ip) {
+                return Some(*mac_addr);
+            }
+        }
+
+        None
     }
 }

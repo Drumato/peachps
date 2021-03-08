@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use thiserror::Error;
 
-use crate::{link, network_device, option, RxResult};
+use crate::{link, network_device, Items, RxResult};
 
 use super::ethernet;
 
@@ -26,8 +24,8 @@ pub enum LinkProtocolError {
     },
 }
 
-pub fn rx<'a>(
-    opt: Arc<option::PeachPSOption>,
+pub async fn rx<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     lp: LinkProtocol,
     buf: &[u8],
 ) -> Result<(RxResult, Vec<u8>), LinkProtocolError> {
@@ -37,9 +35,9 @@ pub fn rx<'a>(
 
     match lp {
         LinkProtocol::Ethernet => {
-            let (frame_header, rest) = ethernet::rx(buf)?;
+            let (frame_header, rest) = ethernet::rx(buf).await?;
 
-            if !should_process(opt.dev_addr, frame_header.dst_addr) {
+            if !should_process(table.opt.dev_addr, frame_header.dst_addr) {
                 return Err(LinkProtocolError::Ignore);
             }
 

@@ -195,6 +195,7 @@ mod tests {
             MessageData::Echo {
                 identifier: 1,
                 sequence_number: 5,
+                raw_data: [0; 32],
             },
             msg.data
         );

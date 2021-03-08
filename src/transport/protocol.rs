@@ -1,14 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use crate::{internet::InternetProtocolError, network_device, Items, RxResult};
 
-use crate::{
-    internet::{self, InternetProtocolError},
-    link, network_device, option, RxResult,
-};
-
-use super::icmp;
+use super::{icmp, tcp};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum TransportProtocol {
@@ -24,6 +16,8 @@ pub trait TransportHeader {}
 pub enum TransportProtocolError {
     #[error("cannot parse ICMP message")]
     CannotParseICMPMessage,
+    #[error("cannot parse TCP segment")]
+    CannotParseTCPSegment,
     #[error("ignore this segment")]
     Ignore,
     #[error("cannot construct ICMP message")]
@@ -34,26 +28,23 @@ pub enum TransportProtocolError {
     IPError { e: InternetProtocolError },
 }
 
-pub fn rx<ND: 'static + network_device::NetworkDevice>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+pub async fn rx<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     ip_result: RxResult,
     buf: &[u8],
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<Vec<u8>, TransportProtocolError> {
-    if !opt.transport_filter.contains(&ip_result.tp_type) {
+    if !table.opt.transport_filter.contains(&ip_result.tp_type) {
         return Err(TransportProtocolError::Ignore);
     }
 
     match ip_result.tp_type {
         TransportProtocol::ICMP => {
-            let (_message_header, rest) = icmp::rx(opt, dev, ip_result, buf, arp_cache)?;
+            let (_message_header, rest) = icmp::rx(table, ip_result, buf).await?;
             Ok(rest)
         }
         TransportProtocol::TCP => {
-            // let (_segment_header, rest) = tcp::rx(opt, dev, ip_result, buf, arp_cache)?;
-            // Ok(rest)
-            unimplemented!()
+            let (_segment_header, rest) = tcp::rx(table, ip_result, buf).await?;
+            Ok(rest)
         }
         _ => unimplemented!(),
     }
@@ -101,6 +92,15 @@ impl Into<u8> for TransportProtocol {
             TransportProtocol::TCP => 6,
             TransportProtocol::UDP => 17,
             TransportProtocol::UnAssigned => panic!("now allowed into() with unassigned protocol"),
+        }
+    }
+}
+
+impl From<InternetProtocolError> for TransportProtocolError {
+    fn from(e: InternetProtocolError) -> Self {
+        match e {
+            InternetProtocolError::Ignore => Self::Ignore,
+            _ => Self::IPError { e },
         }
     }
 }

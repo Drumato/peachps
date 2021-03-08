@@ -45,6 +45,8 @@ pub struct IPHeader {
 pub struct IPv4Addr(pub u32);
 
 impl IPv4Addr {
+    pub const ANY: Self = Self(0);
+
     pub fn to_bytes<E>(&self, err: E) -> Result<Vec<u8>, E>
     where
         E: std::error::Error + Copy,

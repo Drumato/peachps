@@ -35,6 +35,7 @@ where
 {
     buf.write_u16::<BigEndian>(bytes).map_err(|_e| err)
 }
+
 pub fn write_u32_as_be<E>(buf: &mut Vec<u8>, bytes: u32, err: E) -> Result<(), E>
 where
     E: std::error::Error + Copy,

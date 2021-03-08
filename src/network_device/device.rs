@@ -1,10 +1,12 @@
 use crate::link::MacAddress;
+use async_trait::async_trait;
 use thiserror::Error;
 
-pub trait NetworkDevice: Copy + Send {
+#[async_trait]
+pub trait NetworkDevice: Copy + Send + Sync {
     /// デバイスからデータを読み込む
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkDeviceError>;
-    fn write(&mut self, buf: &[u8]) -> Result<usize, NetworkDeviceError>;
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, NetworkDeviceError>;
+    async fn write(&self, buf: &[u8]) -> Result<usize, NetworkDeviceError>;
 
     /// イーサネットフレームのdst_addrが自身に向いているかチェックするために使用
     fn device_addr(&self) -> MacAddress;

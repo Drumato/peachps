@@ -1,17 +1,11 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-
 use internet::InternetProtocolError;
-use link::MacAddress;
 use transport::TransportProtocol;
 
 use super::{IPHeader, IPv4Addr, IP_BROADCAST_ADDRESS};
 use crate::{
     checksum,
-    internet::{self, InternetProtocol},
-    link, network_device, option, transport, RxResult,
+    internet::{self, arp, InternetProtocol},
+    link, network_device, transport, Items, RxResult,
 };
 
 /// プロトコルの動作モード
@@ -22,13 +16,18 @@ enum ProcessMode {
     AnotherHost,
 }
 
-pub fn rx<'a>(
-    opt: Arc<option::PeachPSOption>,
+pub async fn rx<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     mut rx_result: RxResult,
     buf: &'a [u8],
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
     let ip_packet_hdr =
         IPHeader::new_from_bytes(buf, InternetProtocolError::CannotParsePacketHeader)?;
+
+    if table.opt.debug {
+        eprintln!("++++++++ rx ip packet ++++++++");
+        eprintln!("{}", ip_packet_hdr);
+    }
 
     if ip_packet_hdr.ihl_bytes_from_vhl() > IPHeader::LEAST_LENGTH {
         return Err(InternetProtocolError::UnsupportedHeaderOption);
@@ -41,21 +40,19 @@ pub fn rx<'a>(
     let _mode = validate_ip_packet(
         buf,
         &ip_packet_hdr,
-        opt.ip_addr,
-        opt.network_mask,
+        table.opt.ip_addr,
+        table.opt.network_mask,
         buf.len(),
     )?;
 
     Ok((rx_result, rest.to_vec()))
 }
 
-pub fn tx<ND: network_device::NetworkDevice>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+pub async fn tx<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     tp: TransportProtocol,
     rx_result: RxResult,
     tp_payload: Vec<u8>,
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(), InternetProtocolError> {
     let next_hop = if rx_result.src_ip_addr == internet::ip::IP_BROADCAST_ADDRESS {
         None
@@ -65,19 +62,17 @@ pub fn tx<ND: network_device::NetworkDevice>(
         Some(rx_result.src_ip_addr)
     };
     // TODO: segmentation
-    tx_core(next_hop, opt, dev, rx_result, tp, tp_payload, arp_cache)?;
+    tx_core(table, rx_result, tp, tp_payload, next_hop).await?;
 
     Ok(())
 }
 
-fn tx_core<ND: network_device::NetworkDevice>(
-    _next_hop: Option<IPv4Addr>,
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+async fn tx_core<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     rx_result: RxResult,
     tp: TransportProtocol,
     mut tp_payload: Vec<u8>,
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
+    _next_hop: Option<IPv4Addr>,
 ) -> Result<(), InternetProtocolError> {
     let mut ip_packet = Vec::<u8>::new();
 
@@ -92,7 +87,7 @@ fn tx_core<ND: network_device::NetworkDevice>(
         time_to_live: 0xff,
         protocol: tp,
         checksum: 0,
-        src_addr: opt.ip_addr,
+        src_addr: table.opt.ip_addr,
         dst_addr: dst_ip,
     };
 
@@ -102,47 +97,23 @@ fn tx_core<ND: network_device::NetworkDevice>(
         IPHeader::LEAST_LENGTH as u16,
         InternetProtocolError::CannotConstructPacket,
     )?;
+    if table.opt.debug {
+        eprintln!("++++++++ tx ip packet ++++++++");
+        eprintln!("{}", packet_hdr);
+    }
 
     ip_packet.append(&mut packet_hdr.to_bytes(InternetProtocolError::CannotConstructPacket)?);
     ip_packet.append(&mut tp_payload);
 
-    if let Ok(cache) = arp_cache.lock() {
-        if let Some(a) = cache.get(&rx_result.src_ip_addr) {
-            link::ethernet::tx(opt, dev, InternetProtocol::IP, *a, ip_packet)?;
-            return Ok(());
-        }
+    let dst_mac_addr = table.lookup_arp_table(&rx_result.src_ip_addr);
+    if let Some(dst_mac_addr) = dst_mac_addr {
+        link::ethernet::tx(table, InternetProtocol::IP, dst_mac_addr, ip_packet).await?;
+        return Ok(());
     }
 
-    internet::arp::tx_request(Arc::clone(&opt), Arc::clone(&dev), dst_ip)?;
+    let dst_mac_addr = arp::resolve_mac_address(table, dst_ip).await?;
 
-    let dst_mac_addr: Arc<Mutex<Option<MacAddress>>> = Arc::new(Mutex::new(None));
-    let dst1 = Arc::clone(&dst_mac_addr);
-
-    std::thread::spawn(move || {
-        for _ in 0..5 {
-            if let Ok(cache) = arp_cache.lock() {
-                if let Some(a) = cache.get(&dst_ip) {
-                    *dst1.lock().unwrap() = Some(*a);
-                    break;
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        }
-    })
-    .join()
-    .unwrap();
-
-    if dst_mac_addr.lock().unwrap().is_none() {
-        return Err(InternetProtocolError::CannotResolveMACAddressFrom { unknown_ip: dst_ip });
-    }
-
-    link::ethernet::tx(
-        opt,
-        dev,
-        InternetProtocol::IP,
-        dst_mac_addr.lock().unwrap().unwrap(),
-        ip_packet,
-    )?;
+    link::ethernet::tx(table, InternetProtocol::IP, dst_mac_addr, ip_packet).await?;
 
     Ok(())
 }

@@ -1,5 +1,6 @@
 use crate::link;
 use crate::network_device;
+use async_trait::async_trait;
 
 use network_device::NetworkDeviceError;
 
@@ -16,9 +17,10 @@ pub struct Socket {
     pub mac_addr: link::MacAddress,
 }
 
+#[async_trait]
 impl network_device::NetworkDevice for Socket {
     #[allow(dead_code)]
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkDeviceError> {
+    async fn read(&self, buf: &mut [u8]) -> Result<usize, NetworkDeviceError> {
         let result = unsafe {
             let mut pollfd = libc::pollfd {
                 fd: self.fd,
@@ -40,7 +42,7 @@ impl network_device::NetworkDevice for Socket {
 
         Ok(result as usize)
     }
-    fn write(&mut self, buf: &[u8]) -> Result<usize, NetworkDeviceError> {
+    async fn write(&self, buf: &[u8]) -> Result<usize, NetworkDeviceError> {
         let result =
             unsafe { libc::write(self.fd, buf.as_ptr() as *const libc::c_void, buf.len()) };
         if result == -1 || result != buf.len() as isize {

@@ -1,15 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-
 use internet::ip::IPv4Addr;
 
-use crate::{
-    internet,
-    link::{self, LinkProtocolError},
-    network_device, option, RxResult,
-};
+use crate::{internet, link::LinkProtocolError, network_device, Items, RxResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InternetProtocol {
@@ -41,20 +32,18 @@ pub enum InternetProtocolError {
     CannotResolveMACAddressFrom { unknown_ip: IPv4Addr },
 }
 
-pub fn rx<ND: 'static + network_device::NetworkDevice>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+pub async fn rx<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     rx_result: RxResult,
     buf: &[u8],
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(RxResult, Vec<u8>), InternetProtocolError> {
-    if !opt.internet_filter.contains(&rx_result.ip_type) {
+    if !table.opt.internet_filter.contains(&rx_result.ip_type) {
         return Err(InternetProtocolError::Ignore);
     }
 
     match rx_result.ip_type {
-        InternetProtocol::IP => internet::ip::rx(opt, rx_result, buf),
-        InternetProtocol::ARP => internet::arp::rx(opt, dev, rx_result, buf, arp_cache),
+        InternetProtocol::IP => internet::ip::rx(table, rx_result, buf).await,
+        InternetProtocol::ARP => internet::arp::rx(table, rx_result, buf).await,
         _ => unimplemented!(),
     }
 }

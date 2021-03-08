@@ -1,23 +1,16 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-
 use super::{Message, MessageType};
 use crate::{
     checksum::calculate_checksum_u16,
     internet::{self},
-    link, network_device, option,
+    network_device,
     transport::{TransportProtocol, TransportProtocolError},
-    RxResult,
+    Items, RxResult,
 };
 
-pub fn rx<ND: 'static + network_device::NetworkDevice>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+pub async fn rx<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     rx_result: RxResult,
     buf: &[u8],
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(Message, Vec<u8>), TransportProtocolError> {
     let mut header = Message::new_from_bytes(buf, TransportProtocolError::CannotParseICMPMessage)?;
     header.checksum = 0;
@@ -28,7 +21,7 @@ pub fn rx<ND: 'static + network_device::NetworkDevice>(
         TransportProtocolError::InvalidChecksum,
     )?;
 
-    if opt.debug {
+    if table.opt.debug {
         eprintln!("++++++++ rx icmp message ++++++++");
         eprintln!("{}", header);
     }
@@ -36,31 +29,17 @@ pub fn rx<ND: 'static + network_device::NetworkDevice>(
     let (_, rest) = buf.split_at(Message::LENGTH);
 
     if header.ty == MessageType::EchoRequest {
-        std::thread::spawn(move || {
-            tx(
-                opt,
-                dev,
-                MessageType::EchoReply,
-                header,
-                rx_result,
-                arp_cache,
-            )
-            .unwrap();
-        })
-        .join()
-        .unwrap();
+        tx(table, MessageType::EchoReply, header, rx_result).await?;
     }
 
     Ok((header, rest.to_vec()))
 }
 
-pub fn tx<ND: 'static + network_device::NetworkDevice>(
-    opt: Arc<option::PeachPSOption>,
-    dev: Arc<Mutex<ND>>,
+pub async fn tx<'a, ND: network_device::NetworkDevice>(
+    table: &'a Items<ND>,
     msg_type: MessageType,
     received_msg: Message,
     rx_result: RxResult,
-    arp_cache: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
 ) -> Result<(), TransportProtocolError> {
     let mut icmp_message: Message = Default::default();
     icmp_message.ty = msg_type;
@@ -75,19 +54,19 @@ pub fn tx<ND: 'static + network_device::NetworkDevice>(
     )?;
     icmp_message.checksum = cksum;
 
-    if opt.debug {
+    if table.opt.debug {
         eprintln!("++++++++ tx icmp message ++++++++");
         eprintln!("{}", icmp_message);
     }
 
     match internet::ip::tx(
-        opt,
-        dev,
+        table,
         TransportProtocol::ICMP,
         rx_result,
         icmp_message.to_bytes(TransportProtocolError::CannotConstructICMPMessage)?,
-        arp_cache,
-    ) {
+    )
+    .await
+    {
         Ok(_) => Ok(()),
         Err(e) => Err(TransportProtocolError::IPError { e }),
     }

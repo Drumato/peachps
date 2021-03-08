@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 peachps = {path = "../../"}
+tokio = {version = "1", features = ["full"]}
