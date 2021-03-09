@@ -1,7 +1,7 @@
 use internet::InternetProtocolError;
 use transport::TransportProtocol;
 
-use super::{IPHeader, IPv4Addr, IP_BROADCAST_ADDRESS};
+use super::{IPHeader, IPv4Addr};
 use crate::{
     checksum,
     internet::{self, arp, InternetProtocol},
@@ -29,12 +29,6 @@ pub async fn rx<'a, ND: network_device::NetworkDevice>(
         eprintln!("{}", ip_packet_hdr);
     }
 
-    if ip_packet_hdr.ihl_bytes_from_vhl() > IPHeader::LEAST_LENGTH {
-        return Err(InternetProtocolError::UnsupportedHeaderOption);
-    }
-
-    rx_result.src_ip_addr = ip_packet_hdr.src_addr;
-    rx_result.tp_type = ip_packet_hdr.protocol;
     let (_, rest) = buf.split_at(ip_packet_hdr.ihl_bytes_from_vhl() as usize);
 
     let _mode = validate_ip_packet(
@@ -45,6 +39,11 @@ pub async fn rx<'a, ND: network_device::NetworkDevice>(
         buf.len(),
     )?;
 
+    rx_result.src_ip_addr = ip_packet_hdr.src_addr;
+    rx_result.tp_type = ip_packet_hdr.protocol;
+    rx_result.message_len =
+        ip_packet_hdr.total_length as usize - ip_packet_hdr.ihl_bytes_from_vhl() as usize;
+
     Ok((rx_result, rest.to_vec()))
 }
 
@@ -54,13 +53,14 @@ pub async fn tx<'a, ND: network_device::NetworkDevice>(
     rx_result: RxResult,
     tp_payload: Vec<u8>,
 ) -> Result<(), InternetProtocolError> {
-    let next_hop = if rx_result.src_ip_addr == internet::ip::IP_BROADCAST_ADDRESS {
+    let next_hop = if rx_result.src_ip_addr == IPv4Addr::BLOADCAST {
         None
     } else {
         // TODO: Find route
         // TODO: use route to determine next hop
         Some(rx_result.src_ip_addr)
     };
+
     // TODO: segmentation
     tx_core(table, rx_result, tp, tp_payload, next_hop).await?;
 
@@ -156,7 +156,7 @@ fn validate_ip_packet(
     }
 
     // ブロードキャストパケットであるかのチェック
-    if ip_addr == ip_addr.to_broadcast(network_mask) || ip_addr == IP_BROADCAST_ADDRESS {
+    if ip_addr == ip_addr.to_broadcast(network_mask) || ip_addr == IPv4Addr::BLOADCAST {
         return Ok(ProcessMode::Me);
     }
 

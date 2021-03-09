@@ -22,16 +22,3 @@ pub fn setup_raw_socket(interface_name: String) -> Result<Socket, NetworkDeviceE
         Ok(Socket::from_raw(raw_sock.fd, raw_sock.mac_addr))
     }
 }
-
-#[cfg(test)]
-mod operation_tests {
-    use super::*;
-
-    #[test]
-    #[ignore]
-    fn setup_raw_socket_test() {
-        // sudo が必要な操作の為ignoreしておく
-        let result = setup_raw_socket("eth0".to_string());
-        assert!(result.is_ok());
-    }
-}

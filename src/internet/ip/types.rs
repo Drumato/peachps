@@ -10,8 +10,6 @@ const VHL_IHL_MASK: u8 = 0x0f;
 const FLGOFFSET_FLAG_MASK: u16 = 0xe000;
 /// flag_and_offset領域のうちオフセットが該当する部分のマスク
 const FLGOFFSET_OFFSET_MASK: u16 = 0x1fff;
-/// ブロードキャストアドレス
-pub const IP_BROADCAST_ADDRESS: IPv4Addr = IPv4Addr(0xffffffff);
 
 /// IPパケットのヘッダ構造体
 pub struct IPHeader {
@@ -46,6 +44,7 @@ pub struct IPv4Addr(pub u32);
 
 impl IPv4Addr {
     pub const ANY: Self = Self(0);
+    pub const BLOADCAST: Self = Self(0xffffffff);
 
     pub fn to_bytes<E>(&self, err: E) -> Result<Vec<u8>, E>
     where

@@ -20,7 +20,6 @@ pub struct Items<ND: network_device::NetworkDevice> {
     pub opt: option::PeachPSOption,
     pub dev: Arc<Mutex<ND>>,
     pub arp_table: Arc<Mutex<HashMap<internet::ip::IPv4Addr, link::MacAddress>>>,
-    pub tcp_connection: Arc<Mutex<Vec<transport::tcp::ProtocolControlBlock>>>,
 }
 
 #[derive(Error, Debug)]
@@ -45,11 +44,13 @@ pub enum PeachPSError {
     Ignore,
 }
 
+/// 下位層から上位層に向かって伝播させる情報の集約
 pub struct RxResult {
     pub src_mac_addr: link::MacAddress,
     pub src_ip_addr: internet::ip::IPv4Addr,
     pub ip_type: internet::InternetProtocol,
     pub tp_type: transport::TransportProtocol,
+    pub message_len: usize,
 }
 
 async fn rx_datalink<'a, ND>(
@@ -61,15 +62,18 @@ where
 {
     let mut buf: [u8; 2048] = [0; 2048];
 
-    let nbytes = table.dev.lock().unwrap().read(&mut buf).await?;
+    if let Ok(dev) = table.dev.lock() {
+        let nbytes = dev.read(&mut buf).await?;
+        if nbytes == 0 {
+            return Err(PeachPSError::EOF);
+        }
 
-    if nbytes == 0 {
-        return Err(PeachPSError::EOF);
+        let (result, rest) = link::rx(table, lp, &buf).await?;
+
+        return Ok((result, rest));
     }
 
-    let (result, rest) = link::rx(table, lp, &buf).await?;
-
-    Ok((result, rest))
+    unreachable!()
 }
 
 async fn rx_internet<'a, ND>(
@@ -104,9 +108,7 @@ where
         match rx_transport(&table, lp).await {
             Ok(_data) => {}
             Err(e) => match e {
-                PeachPSError::Ignore => {
-                    continue;
-                }
+                PeachPSError::Ignore => {}
                 _ => {
                     eprintln!("Error Found: {}", e);
                     std::process::exit(1);
@@ -156,6 +158,7 @@ impl Default for RxResult {
             src_ip_addr: Default::default(),
             ip_type: Default::default(),
             tp_type: Default::default(),
+            message_len: 0,
         }
     }
 }
@@ -166,7 +169,6 @@ impl<ND: NetworkDevice> Items<ND> {
             opt,
             dev: Arc::new(Mutex::new(dev)),
             arp_table: Arc::new(Mutex::new(HashMap::with_capacity(16))),
-            tcp_connection: Arc::new(Mutex::new(Vec::with_capacity(16))),
         }
     }
 

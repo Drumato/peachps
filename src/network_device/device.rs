@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 #[async_trait]
-pub trait NetworkDevice: Copy + Send + Sync {
+pub trait NetworkDevice: Copy {
     /// デバイスからデータを読み込む
     async fn read(&self, buf: &mut [u8]) -> Result<usize, NetworkDeviceError>;
     async fn write(&self, buf: &[u8]) -> Result<usize, NetworkDeviceError>;

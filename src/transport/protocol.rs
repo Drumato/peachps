@@ -1,6 +1,6 @@
 use crate::{internet::InternetProtocolError, network_device, Items, RxResult};
 
-use super::{icmp, tcp};
+use super::icmp;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum TransportProtocol {
@@ -18,7 +18,7 @@ pub enum TransportProtocolError {
     CannotParseICMPMessage,
     #[error("cannot parse TCP segment")]
     CannotParseTCPSegment,
-    #[error("ignore this segment")]
+    #[error("ignore this data")]
     Ignore,
     #[error("cannot construct ICMP message")]
     CannotConstructICMPMessage,
@@ -40,10 +40,6 @@ pub async fn rx<'a, ND: network_device::NetworkDevice>(
     match ip_result.tp_type {
         TransportProtocol::ICMP => {
             let (_message_header, rest) = icmp::rx(table, ip_result, buf).await?;
-            Ok(rest)
-        }
-        TransportProtocol::TCP => {
-            let (_segment_header, rest) = tcp::rx(table, ip_result, buf).await?;
             Ok(rest)
         }
         _ => unimplemented!(),
@@ -107,6 +103,6 @@ impl From<InternetProtocolError> for TransportProtocolError {
 
 impl Default for TransportProtocol {
     fn default() -> Self {
-        Self::TCP
+        Self::UnAssigned
     }
 }

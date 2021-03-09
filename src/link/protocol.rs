@@ -10,6 +10,7 @@ pub const MTU: usize = 1500;
 pub enum LinkProtocol {
     Ethernet,
 }
+
 #[derive(Error, Debug, Clone, Copy)]
 pub enum LinkProtocolError {
     #[error("cannot parse frame header")]
@@ -25,40 +26,21 @@ pub enum LinkProtocolError {
 }
 
 pub async fn rx<'a, ND: network_device::NetworkDevice>(
-    table: &'a Items<ND>,
+    items: &'a Items<ND>,
     lp: LinkProtocol,
     buf: &[u8],
 ) -> Result<(RxResult, Vec<u8>), LinkProtocolError> {
-    if buf.len() < link::ethernet::FrameHeader::LENGTH {
-        return Err(LinkProtocolError::CannotParseFrameHeader);
-    }
-
     match lp {
         LinkProtocol::Ethernet => {
-            let (frame_header, rest) = ethernet::rx(buf).await?;
+            let (frame_header, rest) = ethernet::rx(items, buf).await?;
 
-            if !should_process(table.opt.dev_addr, frame_header.dst_addr) {
-                return Err(LinkProtocolError::Ignore);
-            }
+            let mut result = RxResult::default();
+            result.src_mac_addr = frame_header.src_addr;
+            result.ip_type = frame_header.ty;
 
-            let result = RxResult {
-                src_mac_addr: frame_header.src_addr,
-                src_ip_addr: Default::default(),
-                ip_type: frame_header.ty,
-                tp_type: Default::default(),
-            };
             Ok((result, rest))
         }
     }
-}
-
-// プロトコルスタックが処理すべきデータかどうか検査
-fn should_process(device_addr: link::MacAddress, frame_dst_addr: link::MacAddress) -> bool {
-    frame_target_is_nic(device_addr, frame_dst_addr)
-        || frame_dst_addr == link::BLOADCAST_MAC_ADDRESS
-}
-fn frame_target_is_nic(device_addr: link::MacAddress, frame_dst_addr: link::MacAddress) -> bool {
-    device_addr == frame_dst_addr
 }
 
 impl std::fmt::Display for LinkProtocol {
@@ -69,6 +51,7 @@ impl std::fmt::Display for LinkProtocol {
         write!(f, "{}", s)
     }
 }
+
 impl Default for LinkProtocol {
     fn default() -> Self {
         LinkProtocol::Ethernet

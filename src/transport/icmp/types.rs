@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use crate::{byteorder_wrapper, transport::TransportHeader};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Message {
     pub ty: MessageType,
     pub code: u8,
@@ -10,12 +10,12 @@ pub struct Message {
     pub data: MessageData,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessageData {
     Echo {
         identifier: u16,
         sequence_number: u16,
-        raw_data: [u8; 32],
+        raw_data: Vec<u8>,
     },
     None,
 }
@@ -54,15 +54,9 @@ impl Message {
             MessageType::EchoRequest | MessageType::EchoReply => {
                 let id = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
                 let seq = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
-                let mut raw_data = [0; 32];
-                let mut idx = 0;
+                let mut raw_data = Vec::new();
                 while let Ok(byte) = byteorder_wrapper::read_u8(&mut reader, err) {
-                    if idx == 32 {
-                        break;
-                    }
-
-                    raw_data[idx] = byte;
-                    idx += 1;
+                    raw_data.push(byte);
                 }
 
                 MessageData::Echo {
@@ -85,14 +79,14 @@ impl Message {
         byteorder_wrapper::write_u8(&mut buf, self.ty.into(), err)?;
         byteorder_wrapper::write_u8(&mut buf, self.code, err)?;
         byteorder_wrapper::write_u16_as_be(&mut buf, self.checksum, err)?;
-        match self.data {
+        match &self.data {
             MessageData::Echo {
                 identifier,
                 sequence_number,
                 raw_data,
             } => {
-                byteorder_wrapper::write_u16_as_be(&mut buf, identifier, err)?;
-                byteorder_wrapper::write_u16_as_be(&mut buf, sequence_number, err)?;
+                byteorder_wrapper::write_u16_as_be(&mut buf, *identifier, err)?;
+                byteorder_wrapper::write_u16_as_be(&mut buf, *sequence_number, err)?;
                 for byte in raw_data.iter() {
                     byteorder_wrapper::write_u8(&mut buf, *byte, err)?;
                 }
@@ -121,7 +115,7 @@ impl std::fmt::Display for Message {
         writeln!(f, "Type: {}", self.ty)?;
         writeln!(f, "Code: {}", self.code)?;
         writeln!(f, "Checksum: {}", self.checksum)?;
-        match self.data {
+        match &self.data {
             MessageData::Echo {
                 identifier,
                 sequence_number,
@@ -195,7 +189,7 @@ mod tests {
             MessageData::Echo {
                 identifier: 1,
                 sequence_number: 5,
-                raw_data: [0; 32],
+                raw_data: [0; 128],
             },
             msg.data
         );

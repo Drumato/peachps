@@ -3,12 +3,13 @@ use std::io::Cursor;
 use crate::byteorder_wrapper;
 
 pub type RawMacAddress = [u8; 6];
-pub const BLOADCAST_MAC_ADDRESS: MacAddress = MacAddress([0xff; 6]);
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub struct MacAddress(pub RawMacAddress);
 
 impl MacAddress {
+    pub const BLOADCAST: MacAddress = MacAddress([0xff; 6]);
+
     pub fn from_cursor<E>(reader: &mut Cursor<&[u8]>, err: E) -> Result<Self, E>
     where
         E: std::error::Error + Copy,
@@ -49,6 +50,7 @@ impl From<[u8; 6]> for MacAddress {
         Self(addr)
     }
 }
+
 impl From<&str> for MacAddress {
     fn from(s: &str) -> Self {
         let mut iter = s.split(":").map(|v| u8::from_str_radix(v, 16).unwrap());

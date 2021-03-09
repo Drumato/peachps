@@ -46,11 +46,13 @@ impl FrameHeader {
 
         Ok(buf)
     }
-    pub fn new_from_bytes<E>(buf: &[u8], err: E) -> Result<Self, E>
+
+    pub fn new_from_bytes<E>(buf: &[u8], err: E) -> Result<(Self, Vec<u8>), E>
     where
         E: std::error::Error + Copy,
     {
-        let mut reader = Cursor::new(buf);
+        let (raw_header, rest) = buf.split_at(FrameHeader::LENGTH);
+        let mut reader = Cursor::new(raw_header);
         let mut frame_hdr: FrameHeader = Default::default();
 
         frame_hdr.dst_addr = MacAddress::from_cursor(&mut reader, err)?;
@@ -60,7 +62,7 @@ impl FrameHeader {
         let frame_type = byteorder_wrapper::read_u16_as_be(&mut reader, err)?;
 
         frame_hdr.ty = internet::InternetProtocol::from(frame_type);
-        Ok(frame_hdr)
+        Ok((frame_hdr, rest.to_vec()))
     }
 }
 

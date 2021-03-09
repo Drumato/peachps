@@ -60,6 +60,7 @@ pub async fn tx_request<'a, ND: network_device::NetworkDevice>(
     target_ip: ip::IPv4Addr,
 ) -> Result<(), InternetProtocolError> {
     let mut send_arp_packet: ARPHeader = Default::default();
+
     send_arp_packet.operation = Operation::Request;
     send_arp_packet.src_internet_addr = table.opt.ip_addr;
     send_arp_packet.src_link_addr = table.opt.dev_addr;
@@ -72,7 +73,7 @@ pub async fn tx_request<'a, ND: network_device::NetworkDevice>(
     ethernet::tx(
         table,
         InternetProtocol::ARP,
-        link::BLOADCAST_MAC_ADDRESS,
+        link::MacAddress::BLOADCAST,
         send_arp_packet.to_bytes(InternetProtocolError::CannotConstructPacket)?,
     )
     .await?;
@@ -93,11 +94,13 @@ async fn tx<'a, ND: network_device::NetworkDevice>(
     receive_arp_packet: &ARPHeader,
 ) -> Result<(), InternetProtocolError> {
     let mut send_arp_packet: ARPHeader = Default::default();
+
     // 殆どの部分は，受信したパケットの値をコピーするだけで良い
     send_arp_packet.link_type = receive_arp_packet.link_type;
     send_arp_packet.internet_type = receive_arp_packet.internet_type;
     send_arp_packet.internet_addr_length = receive_arp_packet.internet_addr_length;
     send_arp_packet.link_addr_length = receive_arp_packet.link_addr_length;
+
     // srcとdstの関係が逆になるので注意．
     send_arp_packet.dst_link_addr = receive_arp_packet.src_link_addr;
     send_arp_packet.dst_internet_addr = receive_arp_packet.src_internet_addr;
