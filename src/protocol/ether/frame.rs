@@ -1,11 +1,13 @@
 use byteorder::{BigEndian, ReadBytesExt};
 use std::{fmt::Display, io::Cursor};
 
+use super::Type;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Frame {
-    dst_addr: MacAddress,
-    src_addr: MacAddress,
-    length: u16,
+    pub dst_addr: MacAddress,
+    pub src_addr: MacAddress,
+    pub protocol: Type,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -42,27 +44,31 @@ impl Display for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Dst addr: {}", self.dst_addr)?;
         writeln!(f, "Src addr: {}", self.src_addr)?;
-        writeln!(f, "Length: {}", self.length)
+        writeln!(f, "Protocol: {}", self.protocol)
     }
 }
 
 impl Frame {
+    /// Ethernet Frameの長さ
+    pub const LENGTH: usize = 14;
+
     pub fn from_bytes(buf: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
         let mut cursor = Cursor::new(buf);
 
         let dst_addr = MacAddress::from_cursor(&mut cursor)?;
         let src_addr = MacAddress::from_cursor(&mut cursor)?;
-        let length = cursor.read_u16::<BigEndian>()?;
+        let protocol = cursor.read_u16::<BigEndian>()?;
 
         Ok(Self {
             dst_addr,
             src_addr,
-            length,
+            protocol: Type::from(protocol),
         })
     }
 }
 
 impl MacAddress {
+    pub const BLOADCAST: MacAddress = MacAddress([0xff; 6]);
     pub fn from_cursor(reader: &mut Cursor<&[u8]>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut addr = [0x00; 6];
         for i in 0..6 {

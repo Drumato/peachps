@@ -4,16 +4,18 @@ use std::{
     thread,
 };
 
-use peachps::{interface::tap::TAPDevice, protocol::ether};
+use peachps::{interface::tap::TAPDevice, protocol::ip};
+
+const HOST_ADDR: ip::IPv4Addr = ip::IPv4Addr([192, 168, 33, 155]);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interface_name = env::args()
         .nth(1)
-        .expect("usage: ./ether_dump <interface_name>");
+        .expect("usage: ./ip_dump <interface_name>");
 
     match TAPDevice::create(&interface_name) {
         Ok(dev) => {
-            ether_dump(dev)?;
+            ip_dump(dev)?;
         }
         Err(e) => eprintln!("Error found: {}", e),
     }
@@ -21,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn ether_dump(dev: TAPDevice) -> Result<(), Box<dyn std::error::Error>> {
+fn ip_dump(dev: TAPDevice) -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::new();
 
     // 受信, 処理スレッドを作る
@@ -36,7 +38,7 @@ fn ether_dump(dev: TAPDevice) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn output_thread(channel: Receiver<ether::Frame>) {
+fn output_thread(channel: Receiver<ip::PacketHeader>) {
     loop {
         if let Ok(frame) = channel.recv() {
             eprintln!("{}", frame);
@@ -44,16 +46,14 @@ fn output_thread(channel: Receiver<ether::Frame>) {
     }
 }
 
-fn rcv_thread(dev: TAPDevice, channel: Sender<ether::Frame>) {
+fn rcv_thread(dev: TAPDevice, channel: Sender<ip::PacketHeader>) {
     loop {
-        match ether::input(dev) {
-            Ok((ether_frame, _rest)) => {
-                channel.send(ether_frame).unwrap();
+        match ip::input(dev, HOST_ADDR) {
+            Ok((ip_packet, _rest)) => {
+                channel.send(ip_packet).unwrap();
             }
             Err(e) => match e {
-                ether::EthernetError::EOF | ether::EthernetError::Ignore => {
-                    continue;
-                }
+                ip::IPError::Ignore => {}
                 _ => panic!("Error found: {}", e),
             },
         }

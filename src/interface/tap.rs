@@ -20,7 +20,7 @@ pub enum TAPDeviceError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TAPDevice {
     fd: i32,
-    addr: MacAddress,
+    pub addr: MacAddress,
 }
 
 impl TAPDevice {
